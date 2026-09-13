@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
 #include <QSurfaceFormat>
 
 int main(int argc, char *argv[])
@@ -14,6 +15,10 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(format);
 
     QApplication app(argc, argv);
+
+#ifdef FOTON_TASK2_SOURCE_DIR
+    QDir::setCurrent(QString::fromUtf8(FOTON_TASK2_SOURCE_DIR));
+#endif
 
     const QStringList args = QCoreApplication::arguments();
     const QString mapDirectory = args.size() > 1 ? args.at(1) : QString();
