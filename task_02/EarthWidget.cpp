@@ -3,35 +3,19 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QImage>
+#include <QImageReader>
 #include <QMouseEvent>
 #include <QVector>
 #include <QtMath>
-#include <QtGlobal>
-
-#include <tiffio.h>
 
 #include <cmath>
-#include <cstdint>
-#include <limits>
-#include <string>
 
 namespace
 {
-constexpr float Pi = 3.14159265358979323846f;
-
-TIFF *openTiffForRead(const QString &filePath)
-{
-#ifdef Q_OS_WIN
-    const std::wstring widePath = QDir::toNativeSeparators(filePath).toStdWString();
-    return TIFFOpenW(widePath.c_str(), "r");
-#else
-    const QByteArray encodedPath = QFile::encodeName(filePath);
-    return TIFFOpen(encodedPath.constData(), "r");
-#endif
-}
+const float Pi = 3.14159265358979323846f;
 }
 
 EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
@@ -177,7 +161,7 @@ void EarthWidget::paintGL()
         GL_TRIANGLES,
         m_indexCount,
         GL_UNSIGNED_INT,
-        nullptr
+        0
     );
 
     m_program->disableAttributeArray(positionAttribute);
@@ -299,8 +283,8 @@ bool EarthWidget::initializeShaders()
 
 void EarthWidget::initializeSphere()
 {
-    constexpr int longitudeSegments = 256;
-    constexpr int latitudeSegments = 128;
+    const int longitudeSegments = 256;
+    const int latitudeSegments = 128;
 
     QVector<Vertex> vertices;
     QVector<quint32> indices;
@@ -321,7 +305,7 @@ void EarthWidget::initializeSphere()
         {
             const float u = static_cast<float>(longitudeIndex) /
                             static_cast<float>(longitudeSegments);
-        
+
             const float longitude = -Pi + u * 2.0f * Pi;
             const float sinLongitude = std::sin(longitude);
             const float cosLongitude = std::cos(longitude);
@@ -370,7 +354,7 @@ void EarthWidget::initializeSphere()
     m_vertexBuffer->setUsagePattern(QOpenGLBuffer::StaticDraw);
     m_vertexBuffer->allocate(
         vertices.constData(),
-        static_cast<int>(vertices.size() * static_cast<int>(sizeof(Vertex)))
+        static_cast<int>(vertices.size() * sizeof(Vertex))
     );
     m_vertexBuffer->release();
 
@@ -380,7 +364,7 @@ void EarthWidget::initializeSphere()
     m_indexBuffer->setUsagePattern(QOpenGLBuffer::StaticDraw);
     m_indexBuffer->allocate(
         indices.constData(),
-        static_cast<int>(indices.size() * static_cast<int>(sizeof(quint32)))
+        static_cast<int>(indices.size() * sizeof(quint32))
     );
     m_indexBuffer->release();
 }
@@ -397,13 +381,13 @@ void EarthWidget::initializeTexture()
     if (texturePath.isEmpty())
     {
         emit textureStatusChanged(
-            QStringLiteral("Map: no suitable Map_*.tif(f) found; GL_MAX_TEXTURE_SIZE=%1")
+            QStringLiteral("Map: no readable Map_*.tif(f) found; GL_MAX_TEXTURE_SIZE=%1")
                 .arg(maxTextureSize)
         );
         return;
     }
 
-    if (!loadTiffTexture(texturePath, width, height))
+    if (!loadTexture(texturePath, width, height))
     {
         emit textureStatusChanged(
             QStringLiteral("Map: failed to load %1")
@@ -431,7 +415,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
     QString bestPath;
     quint64 bestPixelCount = 0;
 
-    const auto considerFile = [this, maxTextureSize, &bestPath, &bestPixelCount, &width, &height]
+    const auto considerFile = [maxTextureSize, &bestPath, &bestPixelCount, &width, &height, this]
                               (const QString &filePath)
     {
         const QFileInfo fileInfo(filePath);
@@ -447,7 +431,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
         int imageWidth = 0;
         int imageHeight = 0;
 
-        if (!readTiffSize(fileInfo.absoluteFilePath(), imageWidth, imageHeight))
+        if (!readImageSize(fileInfo.absoluteFilePath(), imageWidth, imageHeight))
             return;
 
         if (imageWidth <= 0 || imageHeight <= 0 ||
@@ -471,6 +455,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
     if (!m_mapDirectory.isEmpty())
     {
         const QFileInfo requestedPath(m_mapDirectory);
+
         if (requestedPath.isFile())
             considerFile(requestedPath.absoluteFilePath());
     }
@@ -490,16 +475,28 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
     if (!m_mapDirectory.isEmpty() && QFileInfo(m_mapDirectory).isDir())
         addDirectory(m_mapDirectory);
 
-#ifdef FOTON_TASK2_SOURCE_DIR
-    addDirectory(QStringLiteral(FOTON_TASK2_SOURCE_DIR) + QStringLiteral("/maps"));
-#endif
+    QStringList searchRoots;
+    searchRoots << QDir::currentPath()
+                << QCoreApplication::applicationDirPath();
 
-    addDirectory(QDir::current().filePath(QStringLiteral("maps")));
-    addDirectory(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("maps")));
-
-    for (const QString &directoryPath : directories)
+    for (int rootIndex = 0; rootIndex < searchRoots.size(); ++rootIndex)
     {
-        const QDir directory(directoryPath);
+        QDir root(searchRoots.at(rootIndex));
+
+        for (int level = 0; level < 6; ++level)
+        {
+            addDirectory(root.absolutePath());
+            addDirectory(root.filePath(QStringLiteral("maps")));
+            addDirectory(root.filePath(QStringLiteral("task_02/maps")));
+
+            if (!root.cdUp())
+                break;
+        }
+    }
+
+    for (int directoryIndex = 0; directoryIndex < directories.size(); ++directoryIndex)
+    {
+        const QDir directory(directories.at(directoryIndex));
         if (!directory.exists())
             continue;
 
@@ -508,93 +505,57 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
             QDir::Name
         );
 
-        for (const QFileInfo &fileInfo : files)
-            considerFile(fileInfo.absoluteFilePath());
+        for (int fileIndex = 0; fileIndex < files.size(); ++fileIndex)
+            considerFile(files.at(fileIndex).absoluteFilePath());
     }
 
     return bestPath;
 }
 
-bool EarthWidget::readTiffSize(const QString &filePath, int &width, int &height) const
+bool EarthWidget::readImageSize(const QString &filePath, int &width, int &height) const
 {
     width = 0;
     height = 0;
 
-    TIFF *tiff = openTiffForRead(filePath);
-    if (!tiff)
-        return false;
+    QImageReader reader(filePath);
+    const QSize imageSize = reader.size();
 
-    uint32_t imageWidth = 0;
-    uint32_t imageHeight = 0;
-
-    const bool ok =
-        TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &imageWidth) == 1 &&
-        TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &imageHeight) == 1;
-
-    TIFFClose(tiff);
-
-    if (!ok ||
-        imageWidth > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
-        imageHeight > static_cast<uint32_t>(std::numeric_limits<int>::max()))
+    if (imageSize.isValid())
     {
+        width = imageSize.width();
+        height = imageSize.height();
+        return true;
+    }
+
+    const QImage image = reader.read();
+    if (image.isNull())
+    {
+        qWarning() << "Cannot read image" << filePath << reader.errorString();
         return false;
     }
 
-    width = static_cast<int>(imageWidth);
-    height = static_cast<int>(imageHeight);
+    width = image.width();
+    height = image.height();
     return true;
 }
 
-bool EarthWidget::loadTiffTexture(const QString &filePath,
-                                  int expectedWidth,
-                                  int expectedHeight)
+bool EarthWidget::loadTexture(const QString &filePath,
+                              int expectedWidth,
+                              int expectedHeight)
 {
-    TIFF *tiff = openTiffForRead(filePath);
-    if (!tiff)
-        return false;
+    QImageReader reader(filePath);
+    QImage image = reader.read();
 
-    uint32_t imageWidth = 0;
-    uint32_t imageHeight = 0;
-
-    if (TIFFGetField(tiff, TIFFTAG_IMAGEWIDTH, &imageWidth) != 1 ||
-        TIFFGetField(tiff, TIFFTAG_IMAGELENGTH, &imageHeight) != 1)
+    if (image.isNull())
     {
-        TIFFClose(tiff);
+        qWarning() << "Cannot load texture" << filePath << reader.errorString();
         return false;
     }
 
-    if (static_cast<int>(imageWidth) != expectedWidth ||
-        static_cast<int>(imageHeight) != expectedHeight)
-    {
-        TIFFClose(tiff);
+    if (image.width() != expectedWidth || image.height() != expectedHeight)
         return false;
-    }
 
-    const quint64 pixelCount =
-        static_cast<quint64>(imageWidth) * static_cast<quint64>(imageHeight);
-
-    if (pixelCount == 0 ||
-        pixelCount > static_cast<quint64>(std::numeric_limits<int>::max()))
-    {
-        TIFFClose(tiff);
-        return false;
-    }
-
-    QVector<uint32_t> raster(static_cast<int>(pixelCount));
-
-    const int readResult = TIFFReadRGBAImageOriented(
-        tiff,
-        imageWidth,
-        imageHeight,
-        raster.data(),
-        ORIENTATION_TOPLEFT,
-        0
-    );
-
-    TIFFClose(tiff);
-
-    if (readResult == 0)
-        return false;
+    image = image.convertToFormat(QImage::Format_RGBA8888);
 
     if (m_textureId != 0)
         glDeleteTextures(1, &m_textureId);
@@ -608,55 +569,19 @@ bool EarthWidget::loadTiffTexture(const QString &filePath,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
-    const void *pixelData = raster.constData();
     glTexImage2D(
         GL_TEXTURE_2D,
         0,
         GL_RGBA,
-        static_cast<GLsizei>(imageWidth),
-        static_cast<GLsizei>(imageHeight),
+        image.width(),
+        image.height(),
         0,
         GL_RGBA,
         GL_UNSIGNED_BYTE,
-        pixelData
+        image.constBits()
     );
-#else
-    const quint64 byteCount = pixelCount * 4u;
-    if (byteCount > static_cast<quint64>(std::numeric_limits<int>::max()))
-    {
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glDeleteTextures(1, &m_textureId);
-        m_textureId = 0;
-        return false;
-    }
-
-    QByteArray rgbaBytes;
-    rgbaBytes.resize(static_cast<int>(byteCount));
-    unsigned char *destination = reinterpret_cast<unsigned char *>(rgbaBytes.data());
-
-    for (int i = 0; i < raster.size(); ++i)
-    {
-        const uint32_t pixel = raster.at(i);
-        destination[i * 4 + 0] = TIFFGetR(pixel);
-        destination[i * 4 + 1] = TIFFGetG(pixel);
-        destination[i * 4 + 2] = TIFFGetB(pixel);
-        destination[i * 4 + 3] = TIFFGetA(pixel);
-    }
-
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGBA,
-        static_cast<GLsizei>(imageWidth),
-        static_cast<GLsizei>(imageHeight),
-        0,
-        GL_RGBA,
-        GL_UNSIGNED_BYTE,
-        rgbaBytes.constData()
-    );
-#endif
 
     glBindTexture(GL_TEXTURE_2D, 0);
+
     return glGetError() == GL_NO_ERROR;
 }
