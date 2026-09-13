@@ -50,8 +50,8 @@ private:
     void initializeTexture();
 
     QString findBestTexture(int maxTextureSize, int &width, int &height) const;
-    bool readTiffSize(const QString &filePath, int &width, int &height) const;
-    bool loadTiffTexture(const QString &filePath, int expectedWidth, int expectedHeight);
+    bool readImageSize(const QString &filePath, int &width, int &height) const;
+    bool loadTexture(const QString &filePath, int expectedWidth, int expectedHeight);
 
     QString m_mapDirectory;
 
