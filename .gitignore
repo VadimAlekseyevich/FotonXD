@@ -1,0 +1,35 @@
+# Qt Creator user-specific files
+*.user
+*.user.*
+
+# CMake / build directories
+build/
+build-*/
+cmake-build-*/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Compiled files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.pdb
+
+# Local TIFF datasets for task 2
+task_02/maps/*
+!task_02/maps/README.md
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
