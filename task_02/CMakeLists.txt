@@ -25,6 +25,10 @@ add_executable(${PROJECT_NAME}
     ${HEADERS}
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    FOTON_TASK2_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 target_link_libraries(${PROJECT_NAME}
     Qt5::Widgets
     Qt5::OpenGL
