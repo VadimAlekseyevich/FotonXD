@@ -9,6 +9,7 @@
 #include <QImageReader>
 #include <QMouseEvent>
 #include <QVector>
+#include <QWheelEvent>
 #include <QtMath>
 
 #include <cmath>
@@ -16,6 +17,9 @@
 namespace
 {
 const float Pi = 3.14159265358979323846f;
+const float MinCameraDistance = 1.15f;
+const float MaxCameraDistance = 12.0f;
+const float ZoomFactorPerStep = 0.82f;
 }
 
 EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
@@ -26,6 +30,7 @@ EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
       m_hasTexture(false),
       m_rotationX(15.0f),
       m_rotationY(0.0f),
+      m_cameraDistance(3.2f),
       m_frameCount(0)
 {
     setFocusPolicy(Qt::StrongFocus);
@@ -116,7 +121,7 @@ void EarthWidget::paintGL()
     }
 
     QMatrix4x4 modelView;
-    modelView.translate(0.0f, 0.0f, -3.2f);
+    modelView.translate(0.0f, 0.0f, -m_cameraDistance);
     modelView.rotate(m_rotationX, 1.0f, 0.0f, 0.0f);
     modelView.rotate(m_rotationY, 0.0f, 1.0f, 0.0f);
 
@@ -220,6 +225,32 @@ void EarthWidget::mouseMoveEvent(QMouseEvent *event)
     }
 
     QOpenGLWidget::mouseMoveEvent(event);
+}
+
+void EarthWidget::wheelEvent(QWheelEvent *event)
+{
+    const int wheelDelta = event->angleDelta().y();
+    if (wheelDelta == 0)
+    {
+        QOpenGLWidget::wheelEvent(event);
+        return;
+    }
+
+    const float wheelSteps = static_cast<float>(wheelDelta) / 120.0f;
+    const float zoomMultiplier = static_cast<float>(
+        std::pow(static_cast<double>(ZoomFactorPerStep),
+                 static_cast<double>(wheelSteps))
+    );
+
+    m_cameraDistance *= zoomMultiplier;
+
+    if (m_cameraDistance < MinCameraDistance)
+        m_cameraDistance = MinCameraDistance;
+    else if (m_cameraDistance > MaxCameraDistance)
+        m_cameraDistance = MaxCameraDistance;
+
+    update();
+    event->accept();
 }
 
 bool EarthWidget::initializeShaders()

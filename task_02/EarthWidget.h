@@ -13,7 +13,9 @@
 
 #include <memory>
 
+class QKeyEvent;
 class QMouseEvent;
+class QWheelEvent;
 
 class EarthWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
@@ -32,8 +34,10 @@ protected:
     void resizeGL(int width, int height) override;
     void paintGL() override;
 
+    void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
     struct Vertex
@@ -66,6 +70,7 @@ private:
 
     float m_rotationX;
     float m_rotationY;
+    float m_cameraDistance;
     QPoint m_lastMousePosition;
 
     QElapsedTimer m_fpsTimer;
