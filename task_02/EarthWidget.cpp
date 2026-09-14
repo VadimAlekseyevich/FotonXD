@@ -7,6 +7,7 @@
 #include <QFileInfoList>
 #include <QImage>
 #include <QImageReader>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QVector>
 #include <QWheelEvent>
@@ -194,6 +195,40 @@ void EarthWidget::paintGL()
         m_frameCount = 0;
         m_fpsTimer.restart();
     }
+}
+
+void EarthWidget::keyPressEvent(QKeyEvent *event)
+{
+    if (event->modifiers() & Qt::ControlModifier)
+    {
+        float zoomSteps = 0.0f;
+
+        if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal)
+            zoomSteps = 1.0f;
+        else if (event->key() == Qt::Key_Minus)
+            zoomSteps = -1.0f;
+
+        if (zoomSteps != 0.0f)
+        {
+            const float zoomMultiplier = static_cast<float>(
+                std::pow(static_cast<double>(ZoomFactorPerStep),
+                         static_cast<double>(zoomSteps))
+            );
+
+            m_cameraDistance *= zoomMultiplier;
+
+            if (m_cameraDistance < MinCameraDistance)
+                m_cameraDistance = MinCameraDistance;
+            else if (m_cameraDistance > MaxCameraDistance)
+                m_cameraDistance = MaxCameraDistance;
+
+            update();
+            event->accept();
+            return;
+        }
+    }
+
+    QOpenGLWidget::keyPressEvent(event);
 }
 
 void EarthWidget::mousePressEvent(QMouseEvent *event)
