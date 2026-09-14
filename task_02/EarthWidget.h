@@ -13,6 +13,7 @@
 
 #include <memory>
 
+class QKeyEvent;
 class QMouseEvent;
 class QWheelEvent;
 
@@ -33,6 +34,7 @@ protected:
     void resizeGL(int width, int height) override;
     void paintGL() override;
 
+    void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
