@@ -9,7 +9,7 @@
 namespace
 {
 const QSize viewport(801, 601);
-const QPoint center(400, 300);
+const QPoint centerPixel(400, 300);
 
 QMatrix4x4 projection()
 {
@@ -46,27 +46,27 @@ int main()
     double lat = 0.0, lon = 0.0;
     const QMatrix4x4 proj = projection();
 
-    bool hit = GeoPicking::screenToGeodetic(center, viewport, proj,
+    bool hit = GeoPicking::screenToGeodetic(centerPixel, viewport, proj,
                                            modelView(3.2f), lat, lon);
     failures += check("front center maps to 0 N, 0 E",
                       hit && near(lat, 0) && near(lon, 0));
 
-    hit = GeoPicking::screenToGeodetic(center, viewport, proj,
+    hit = GeoPicking::screenToGeodetic(centerPixel, viewport, proj,
                                       modelView(3.2f, 0, 90), lat, lon);
     failures += check("Y rotation is undone: 90 W at center",
                       hit && near(lat, 0) && near(lon, -90));
 
-    hit = GeoPicking::screenToGeodetic(center, viewport, proj,
+    hit = GeoPicking::screenToGeodetic(centerPixel, viewport, proj,
                                       modelView(3.2f, 90, 0), lat, lon);
     failures += check("X rotation is undone: north pole at center",
                       hit && near(lat, 90));
 
-    hit = GeoPicking::screenToGeodetic(center, viewport, proj,
+    hit = GeoPicking::screenToGeodetic(centerPixel, viewport, proj,
                                       modelView(1.15f), lat, lon);
     failures += check("zoomed-in center remains geographic origin",
                       hit && near(lat, 0) && near(lon, 0));
 
-    hit = GeoPicking::screenToGeodetic(center, viewport, proj,
+    hit = GeoPicking::screenToGeodetic(centerPixel, viewport, proj,
                                       modelView(20.0f), lat, lon);
     failures += check("zoomed-out center remains geographic origin",
                       hit && near(lat, 0) && near(lon, 0));

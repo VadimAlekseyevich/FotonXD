@@ -256,7 +256,7 @@ void EarthWidget::wheelEvent(QWheelEvent *event)
     {
         const double newDistance = m_cameraDistance * std::pow(0.85, steps);
         m_cameraDistance = qBound(1.15f, static_cast<float>(newDistance), 20.0f);
-        updateCursorCoordinates(event->pos());
+        updateCursorCoordinates(event->position().toPoint());
         update();
     }
     event->accept();
