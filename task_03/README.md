@@ -40,3 +40,21 @@ cmake --build build/task_03 --config Release
 4. При пустом каталоге карт геометрия и определение координат всё равно работают.
 
 Сферическая модель предполагает нулевую высоту и не использует геодезический эллипсоид.
+
+
+## Проверка сборки и геометрии
+
+В проекте есть консольный тест `GeoPickingTest` (8 проверок пересечения, поворотов,
+масштабирования и выхода за пределы сферы). Для Windows после установки Qt 5.15:
+
+```powershell
+cmake -S task_03 -B build/task_03 -DCMAKE_PREFIX_PATH="C:/Qt/5.15.2/msvc2019_64" -DBUILD_TESTING=ON
+cmake --build build/task_03 --config Release
+ctest --test-dir build/task_03 -C Release --output-on-failure
+```
+
+Запускаемый файл для сборки Visual Studio: `build/task_03/Release/Shilin_3d_task_3.exe`.
+При запуске вне Qt Creator проверьте, что Qt `bin` доступен в `PATH` либо
+запустите `windeployqt` для собранного exe; чтение TIFF дополнительно требует
+плагина Qt Image Formats. В GitHub Actions конфигурация, сборка и тесты запускаются
+на Linux и Windows при каждом push в `main`.

@@ -1,4 +1,5 @@
 #include "EarthWidget.h"
+#include "GeoPicking.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -10,8 +11,6 @@
 #include <QImageReader>
 #include <QMouseEvent>
 #include <QWheelEvent>
-#include <QVector3D>
-#include <QVector4D>
 #include <QVector>
 #include <QtMath>
 
@@ -212,71 +211,12 @@ void EarthWidget::updateCursorCoordinates(const QPoint &position)
     m_lastCursorPosition = position;
     m_hasCursorPosition = true;
 
-    if (width() <= 0 || height() <= 0 ||
-        position.x() < 0 || position.x() >= width() ||
-        position.y() < 0 || position.y() >= height())
-    {
-        emit coordinatesChanged(false, 0.0, 0.0);
-        return;
-    }
+    double latitude = 0.0;
+    double longitude = 0.0;
+    const bool onGlobe = GeoPicking::screenToGeodetic(
+        position, size(), m_projection, modelViewMatrix(), latitude, longitude);
 
-    // Mouse positions are logical pixels; ratios match the projection aspect.
-    const float ndcX = 2.0f * (position.x() + 0.5f) / width() - 1.0f;
-    const float ndcY = 1.0f - 2.0f * (position.y() + 0.5f) / height();
-
-    bool invertible = false;
-    const QMatrix4x4 inverseProjection = m_projection.inverted(&invertible);
-    if (!invertible)
-    {
-        emit coordinatesChanged(false, 0.0, 0.0);
-        return;
-    }
-
-    // A perspective camera at (0,0,0) sees a ray through the pixel.
-    const QVector4D nearPoint =
-        inverseProjection * QVector4D(ndcX, ndcY, -1.0f, 1.0f);
-    const QVector3D cameraDirection = nearPoint.toVector3DAffine().normalized();
-
-    // Transform the ray back into unrotated, unit-sphere object coordinates.
-    const QMatrix4x4 inverseModelView = modelViewMatrix().inverted(&invertible);
-    if (!invertible)
-    {
-        emit coordinatesChanged(false, 0.0, 0.0);
-        return;
-    }
-
-    const QVector3D origin = inverseModelView.map(QVector3D(0.0f, 0.0f, 0.0f));
-    const QVector3D direction =
-        inverseModelView.mapVector(cameraDirection).normalized();
-
-    // |origin + t*direction|^2 = 1; pick the nearest positive root.
-    const float halfB = QVector3D::dotProduct(origin, direction);
-    const float c = QVector3D::dotProduct(origin, origin) - 1.0f;
-    const float discriminant = halfB * halfB - c;
-    if (discriminant < 0.0f)
-    {
-        emit coordinatesChanged(false, 0.0, 0.0);
-        return;
-    }
-
-    const float root = std::sqrt(discriminant);
-    float t = -halfB - root;
-    if (t < 0.0f)
-        t = -halfB + root;
-    if (t < 0.0f)
-    {
-        emit coordinatesChanged(false, 0.0, 0.0);
-        return;
-    }
-
-    const QVector3D hit = (origin + t * direction).normalized();
-    // Matches mesh: X=cos(lat)*sin(lon), Y=sin(lat), Z=cos(lat)*cos(lon).
-    const double latitude = qRadiansToDegrees(
-        std::asin(qBound(-1.0, static_cast<double>(hit.y()), 1.0)));
-    const double longitude = qRadiansToDegrees(
-        std::atan2(static_cast<double>(hit.x()), static_cast<double>(hit.z())));
-
-    emit coordinatesChanged(true, latitude, longitude);
+    emit coordinatesChanged(onGlobe, latitude, longitude);
 }
 
 void EarthWidget::mousePressEvent(QMouseEvent *event)

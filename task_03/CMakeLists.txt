@@ -12,8 +12,17 @@ add_executable(${PROJECT_NAME}
     MainWindow.h
     EarthWidget.cpp
     EarthWidget.h
+    GeoPicking.h
 )
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     FOTON_TASK3_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets Qt5::OpenGL)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(GeoPickingTest tests/GeoPickingTest.cpp GeoPicking.h)
+    target_include_directories(GeoPickingTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(GeoPickingTest PRIVATE Qt5::Gui)
+    add_test(NAME GeoPicking COMMAND GeoPickingTest)
+endif()
