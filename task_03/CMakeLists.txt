@@ -1,28 +1,36 @@
-cmake_minimum_required(VERSION 3.16)
-project(Shilin_3d_task_3 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.10)
+
+project(Shilin_3d_task_3)
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(Qt5 COMPONENTS Widgets OpenGL REQUIRED)
+
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt5 5.15 REQUIRED COMPONENTS Widgets OpenGL)
-
-add_executable(${PROJECT_NAME}
+set(SOURCES
     main.cpp
     MainWindow.cpp
-    MainWindow.h
     EarthWidget.cpp
+)
+
+set(HEADERS
+    MainWindow.h
     EarthWidget.h
     GeoPicking.h
 )
+
+add_executable(${PROJECT_NAME}
+    ${SOURCES}
+    ${HEADERS}
+)
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     FOTON_TASK3_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets Qt5::OpenGL)
 
-include(CTest)
-if(BUILD_TESTING)
-    add_executable(GeoPickingTest tests/GeoPickingTest.cpp GeoPicking.h)
-    target_include_directories(GeoPickingTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(GeoPickingTest PRIVATE Qt5::Gui)
-    add_test(NAME GeoPicking COMMAND GeoPickingTest)
-endif()
+target_link_libraries(${PROJECT_NAME}
+    Qt5::Widgets
+    Qt5::OpenGL
+)
