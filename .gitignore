@@ -24,9 +24,11 @@ compile_commands.json
 *.lib
 *.pdb
 
-# Local TIFF datasets for task 2
+# Local TIFF datasets
 task_02/maps/*
 !task_02/maps/README.md
+task_03/maps/*
+!task_03/maps/README.md
 
 # OS / editors
 .DS_Store
