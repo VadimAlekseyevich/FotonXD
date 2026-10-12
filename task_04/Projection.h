@@ -3,6 +3,8 @@
 
 #include <QString>
 
+struct GeoTiffMetadata;
+
 class Projection
 {
 public:
@@ -14,6 +16,9 @@ public:
     };
 
     Projection();
+
+    bool configureFromGeoTiff(const GeoTiffMetadata &metadata,
+                              QString &error);
 
     bool configureFromEpsg(int epsgCode, QString &error);
 
