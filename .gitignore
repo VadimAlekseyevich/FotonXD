@@ -29,6 +29,8 @@ task_02/maps/*
 !task_02/maps/.gitkeep
 task_03/maps/*
 !task_03/maps/.gitkeep
+task_04/data/*.tif
+task_04/data/*.tiff
 
 # OS / editors
 .DS_Store
