@@ -6,6 +6,10 @@
 #include <QFileInfo>
 #include <QTextStream>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 
@@ -43,6 +47,11 @@ void printUsage(QTextStream &out, const QString &programName)
 
 int main(int argc, char *argv[])
 {
+#ifdef Q_OS_WIN
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+
     QCoreApplication app(argc, argv);
 
     QTextStream out(stdout);
@@ -90,12 +99,55 @@ int main(int argc, char *argv[])
 
     out << "Image: " << QFileInfo(imagePath).fileName() << '\n';
     out << "Size: " << metadata.width << " x " << metadata.height << '\n';
-    out << "Projected CRS: EPSG:" << projection.epsgCode()
-        << " (" << projection.description() << ")" << '\n';
+    if (projection.epsgCode() != 0)
+    {
+        out << "Projected CRS: EPSG:" << projection.epsgCode()
+            << " (" << projection.description() << ")" << '\n';
+    }
+    else
+    {
+        out << "Projected CRS: user-defined GeoTIFF"
+            << " (" << projection.description() << ")" << '\n';
+    }
 
-    if (metadata.geographicType != 0)
+    if (metadata.geographicType != 0 &&
+        metadata.geographicType != 32767)
+    {
         out << "Geographic CRS GeoKey: EPSG:"
             << metadata.geographicType << '\n';
+    }
+
+    if (metadata.projectedCrs == 32767 || metadata.projectedCrs == 0)
+    {
+        out << "GeoTIFF projection GeoKeys:" << '\n';
+        out << "  ProjCoordTrans        = "
+            << metadata.coordinateTransform << '\n';
+
+        if (metadata.hasLatitudeOfOrigin)
+            out << "  latitude parameter    = "
+                << number(metadata.latitudeOfOrigin) << " deg" << '\n';
+
+        if (metadata.hasLongitudeOfOrigin)
+            out << "  longitude of origin   = "
+                << number(metadata.longitudeOfOrigin) << " deg" << '\n';
+
+        if (metadata.hasStraightVertPoleLongitude)
+            out << "  straight pole long.   = "
+                << number(metadata.straightVertPoleLongitude)
+                << " deg" << '\n';
+
+        if (metadata.hasScaleAtNaturalOrigin)
+            out << "  scale at nat. origin  = "
+                << number(metadata.scaleAtNaturalOrigin) << '\n';
+
+        if (metadata.hasFalseEasting)
+            out << "  false easting         = "
+                << number(metadata.falseEasting) << " m" << '\n';
+
+        if (metadata.hasFalseNorthing)
+            out << "  false northing        = "
+                << number(metadata.falseNorthing) << " m" << '\n';
+    }
 
     out << '\n';
     out << "Raster -> projected affine transform:" << '\n';
