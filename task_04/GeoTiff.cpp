@@ -15,11 +15,25 @@ const quint16 TagModelPixelScale = 33550;
 const quint16 TagModelTiepoint = 33922;
 const quint16 TagModelTransformation = 34264;
 const quint16 TagGeoKeyDirectory = 34735;
+const quint16 TagGeoDoubleParams = 34736;
 
 const quint16 GeoKeyModelType = 1024;
 const quint16 GeoKeyRasterType = 1025;
+
 const quint16 GeoKeyGeographicType = 2048;
+const quint16 GeoKeyEllipsoid = 2056;
+const quint16 GeoKeySemiMajorAxis = 2057;
+const quint16 GeoKeyInvFlattening = 2059;
+
 const quint16 GeoKeyProjectedCrs = 3072;
+const quint16 GeoKeyCoordTransform = 3075;
+const quint16 GeoKeyLinearUnits = 3076;
+const quint16 GeoKeyNatOriginLong = 3080;
+const quint16 GeoKeyNatOriginLat = 3081;
+const quint16 GeoKeyFalseEasting = 3082;
+const quint16 GeoKeyFalseNorthing = 3083;
+const quint16 GeoKeyScaleAtNatOrigin = 3092;
+const quint16 GeoKeyStraightVertPoleLong = 3095;
 
 const quint16 RasterPixelIsPoint = 2;
 
@@ -103,24 +117,24 @@ int typeSize(quint16 type)
 {
     switch (type)
     {
-    case 1:  // BYTE
-    case 2:  // ASCII
-    case 6:  // SBYTE
-    case 7:  // UNDEFINED
+    case 1:
+    case 2:
+    case 6:
+    case 7:
         return 1;
 
-    case 3:  // SHORT
-    case 8:  // SSHORT
+    case 3:
+    case 8:
         return 2;
 
-    case 4:  // LONG
-    case 9:  // SLONG
-    case 11: // FLOAT
+    case 4:
+    case 9:
+    case 11:
         return 4;
 
-    case 5:  // RATIONAL
-    case 10: // SRATIONAL
-    case 12: // DOUBLE
+    case 5:
+    case 10:
+    case 12:
         return 8;
 
     default:
@@ -139,11 +153,8 @@ bool readAt(QFile &file, quint32 offset, qint64 size, QByteArray &data)
 
 bool entryData(QFile &file,
                const TiffEntry &entry,
-               bool littleEndian,
                QByteArray &data)
 {
-    Q_UNUSED(littleEndian);
-
     const int itemSize = typeSize(entry.type);
     if (itemSize == 0)
         return false;
@@ -183,7 +194,7 @@ bool firstUnsigned(QFile &file,
                    quint32 &value)
 {
     QByteArray data;
-    if (!entryData(file, entry, littleEndian, data))
+    if (!entryData(file, entry, data))
         return false;
 
     if (entry.type == 3 && data.size() >= 2)
@@ -210,7 +221,7 @@ bool shortValues(QFile &file,
         return false;
 
     QByteArray data;
-    if (!entryData(file, entry, littleEndian, data))
+    if (!entryData(file, entry, data))
         return false;
 
     if (data.size() != static_cast<int>(entry.count * 2u))
@@ -234,7 +245,7 @@ bool doubleValues(QFile &file,
         return false;
 
     QByteArray data;
-    if (!entryData(file, entry, littleEndian, data))
+    if (!entryData(file, entry, data))
         return false;
 
     if (data.size() != static_cast<int>(entry.count * 8u))
@@ -248,6 +259,24 @@ bool doubleValues(QFile &file,
 
     return true;
 }
+
+bool geoDoubleValue(const QVector<double> &doubleParams,
+                    quint16 location,
+                    quint16 count,
+                    quint16 valueOffset,
+                    double &value)
+{
+    if (location != TagGeoDoubleParams || count < 1)
+        return false;
+
+    const int index = static_cast<int>(valueOffset);
+
+    if (index < 0 || index >= doubleParams.size())
+        return false;
+
+    value = doubleParams.at(index);
+    return true;
+}
 }
 
 GeoTiffMetadata::GeoTiffMetadata()
@@ -257,6 +286,25 @@ GeoTiffMetadata::GeoTiffMetadata()
       rasterType(0),
       geographicType(0),
       projectedCrs(0),
+      ellipsoid(0),
+      coordinateTransform(0),
+      linearUnits(0),
+      semiMajorAxis(0.0),
+      inverseFlattening(0.0),
+      latitudeOfOrigin(0.0),
+      longitudeOfOrigin(0.0),
+      straightVertPoleLongitude(0.0),
+      scaleAtNaturalOrigin(0.0),
+      falseEasting(0.0),
+      falseNorthing(0.0),
+      hasSemiMajorAxis(false),
+      hasInverseFlattening(false),
+      hasLatitudeOfOrigin(false),
+      hasLongitudeOfOrigin(false),
+      hasStraightVertPoleLongitude(false),
+      hasScaleAtNaturalOrigin(false),
+      hasFalseEasting(false),
+      hasFalseNorthing(false),
       hasGeoTransform(false)
 {
     for (int i = 0; i < 6; ++i)
@@ -381,6 +429,18 @@ bool GeoTiffReader::read(const QString &filePath,
         return false;
     }
 
+    QVector<double> doubleParams;
+    const TiffEntry *doubleEntry = findEntry(entries, TagGeoDoubleParams);
+
+    if (doubleEntry)
+    {
+        if (!doubleValues(file, *doubleEntry, littleEndian, doubleParams))
+        {
+            error = "Invalid GeoDoubleParamsTag";
+            return false;
+        }
+    }
+
     const int numberOfKeys = keys.at(3);
     if (keys.size() < 4 + numberOfKeys * 4)
     {
@@ -399,21 +459,75 @@ bool GeoTiffReader::read(const QString &filePath,
         const quint16 valueOffset = keys.at(base + 3);
 
         if (location == 0 && count == 1)
+        {
             shortGeoKeys.insert(keyId, valueOffset);
+            continue;
+        }
+
+        double value = 0.0;
+        if (!geoDoubleValue(doubleParams,
+                            location,
+                            count,
+                            valueOffset,
+                            value))
+        {
+            continue;
+        }
+
+        switch (keyId)
+        {
+        case GeoKeySemiMajorAxis:
+            metadata.semiMajorAxis = value;
+            metadata.hasSemiMajorAxis = true;
+            break;
+
+        case GeoKeyInvFlattening:
+            metadata.inverseFlattening = value;
+            metadata.hasInverseFlattening = true;
+            break;
+
+        case GeoKeyNatOriginLong:
+            metadata.longitudeOfOrigin = value;
+            metadata.hasLongitudeOfOrigin = true;
+            break;
+
+        case GeoKeyNatOriginLat:
+            metadata.latitudeOfOrigin = value;
+            metadata.hasLatitudeOfOrigin = true;
+            break;
+
+        case GeoKeyFalseEasting:
+            metadata.falseEasting = value;
+            metadata.hasFalseEasting = true;
+            break;
+
+        case GeoKeyFalseNorthing:
+            metadata.falseNorthing = value;
+            metadata.hasFalseNorthing = true;
+            break;
+
+        case GeoKeyScaleAtNatOrigin:
+            metadata.scaleAtNaturalOrigin = value;
+            metadata.hasScaleAtNaturalOrigin = true;
+            break;
+
+        case GeoKeyStraightVertPoleLong:
+            metadata.straightVertPoleLongitude = value;
+            metadata.hasStraightVertPoleLongitude = true;
+            break;
+
+        default:
+            break;
+        }
     }
 
     metadata.modelType = shortGeoKeys.value(GeoKeyModelType, 0);
     metadata.rasterType = shortGeoKeys.value(GeoKeyRasterType, 0);
     metadata.geographicType = shortGeoKeys.value(GeoKeyGeographicType, 0);
     metadata.projectedCrs = shortGeoKeys.value(GeoKeyProjectedCrs, 0);
-
-    if (metadata.projectedCrs == 0 || metadata.projectedCrs == 32767)
-    {
-        error =
-            "ProjectedCSTypeGeoKey is missing or user-defined. "
-            "This task implementation expects a standard WGS84 UTM/UPS EPSG code.";
-        return false;
-    }
+    metadata.ellipsoid = shortGeoKeys.value(GeoKeyEllipsoid, 0);
+    metadata.coordinateTransform = shortGeoKeys.value(GeoKeyCoordTransform, 0);
+    metadata.linearUnits = shortGeoKeys.value(GeoKeyLinearUnits, 0);
 
     const TiffEntry *matrixEntry = findEntry(entries, TagModelTransformation);
 
@@ -475,8 +589,8 @@ bool GeoTiffReader::read(const QString &filePath,
         metadata.hasGeoTransform = true;
     }
 
-    // GeoTIFF PixelIsPoint defines (0,0) at the pixel centre.
-    // The task requires (0,0) at the upper-left corner of that pixel.
+    // PixelIsPoint stores the tie point at the pixel centre.
+    // The task requires (0,0) at the upper-left corner of the pixel.
     if (metadata.rasterType == RasterPixelIsPoint)
     {
         metadata.gt[0] -= 0.5 * metadata.gt[1] + 0.5 * metadata.gt[2];
