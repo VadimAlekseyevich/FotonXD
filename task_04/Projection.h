@@ -37,6 +37,8 @@ public:
     double scaleFactor() const;
     double falseEasting() const;
     double falseNorthing() const;
+    double semiMajorAxis() const;
+    double inverseFlattening() const;
 
     QString description() const;
 
