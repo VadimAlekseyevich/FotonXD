@@ -456,6 +456,16 @@ double Projection::falseNorthing() const
     return m_falseNorthing;
 }
 
+double Projection::semiMajorAxis() const
+{
+    return A;
+}
+
+double Projection::inverseFlattening() const
+{
+    return InvF;
+}
+
 QString Projection::description() const
 {
     if (m_type == UTM)
