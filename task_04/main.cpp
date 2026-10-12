@@ -110,6 +110,10 @@ int main(int argc, char *argv[])
 
     out << '\n';
     out << "Projection parameters:" << '\n';
+    out << "  semi-major axis a   = "
+        << number(projection.semiMajorAxis()) << " m" << '\n';
+    out << "  inverse flattening  = "
+        << number(projection.inverseFlattening()) << '\n';
     out << "  latitude of origin  = "
         << number(projection.latitudeOfOriginDeg()) << " deg" << '\n';
     out << "  longitude of origin = "
