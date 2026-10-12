@@ -1,4 +1,5 @@
 #include "Projection.h"
+#include "GeoTiff.h"
 
 #include <cmath>
 
@@ -47,6 +48,49 @@ double wrapRadians(double value)
         value += 2.0 * Pi;
     return value;
 }
+
+bool approximately(double value, double expected, double tolerance)
+{
+    return std::fabs(value - expected) <= tolerance;
+}
+
+double polarScaleAtPole(double standardParallelDeg)
+{
+    const double phiF = degToRad(standardParallelDeg);
+    const double sinPhiF = std::sin(phiF);
+    const double e2 = E * E;
+
+    const double mF =
+        std::cos(phiF) /
+        std::sqrt(1.0 - e2 * sinPhiF * sinPhiF);
+
+    const double ratio =
+        (1.0 + E * sinPhiF) /
+        (1.0 - E * sinPhiF);
+
+    double tF = 0.0;
+
+    if (standardParallelDeg >= 0.0)
+    {
+        tF =
+            std::tan(Pi / 4.0 - phiF / 2.0) *
+            std::pow(ratio, E / 2.0);
+    }
+    else
+    {
+        tF =
+            std::tan(Pi / 4.0 + phiF / 2.0) /
+            std::pow(ratio, E / 2.0);
+    }
+
+    const double factor =
+        std::sqrt(
+            std::pow(1.0 + E, 1.0 + E) *
+            std::pow(1.0 - E, 1.0 - E)
+        );
+
+    return mF * factor / (2.0 * tF);
+}
 }
 
 Projection::Projection()
@@ -60,6 +104,180 @@ Projection::Projection()
       m_falseEasting(0.0),
       m_falseNorthing(0.0)
 {
+}
+
+bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
+                                      QString &error)
+{
+    error.clear();
+
+    if (metadata.projectedCrs != 0 &&
+        metadata.projectedCrs != 32767)
+    {
+        return configureFromEpsg(metadata.projectedCrs, error);
+    }
+
+    // Task test points are WGS84. Accept either the standard WGS84
+    // GeoKeys or explicit WGS84 ellipsoid parameters.
+    if (metadata.geographicType != 0 &&
+        metadata.geographicType != 32767 &&
+        metadata.geographicType != 4326)
+    {
+        error = QString("Unsupported geographic CRS GeoKey: %1; WGS84 is required.")
+                    .arg(metadata.geographicType);
+        return false;
+    }
+
+    if (metadata.ellipsoid != 0 &&
+        metadata.ellipsoid != 32767 &&
+        metadata.ellipsoid != 7030)
+    {
+        error = QString("Unsupported ellipsoid GeoKey: %1; WGS84 is required.")
+                    .arg(metadata.ellipsoid);
+        return false;
+    }
+
+    if (metadata.hasSemiMajorAxis &&
+        !approximately(metadata.semiMajorAxis, A, 0.001))
+    {
+        error = "GeoTIFF semi-major axis is not WGS84.";
+        return false;
+    }
+
+    if (metadata.hasInverseFlattening &&
+        !approximately(metadata.inverseFlattening, InvF, 0.000001))
+    {
+        error = "GeoTIFF inverse flattening is not WGS84.";
+        return false;
+    }
+
+    if (metadata.linearUnits != 0 &&
+        metadata.linearUnits != 32767 &&
+        metadata.linearUnits != 9001)
+    {
+        error = QString("Unsupported projected linear units GeoKey: %1; metres are required.")
+                    .arg(metadata.linearUnits);
+        return false;
+    }
+
+    // GeoTIFF CT_TransverseMercator.
+    if (metadata.coordinateTransform == 1)
+    {
+        if (!metadata.hasLatitudeOfOrigin ||
+            !metadata.hasLongitudeOfOrigin ||
+            !metadata.hasScaleAtNaturalOrigin ||
+            !metadata.hasFalseEasting ||
+            !metadata.hasFalseNorthing)
+        {
+            error =
+                "User-defined Transverse Mercator is missing one or more "
+                "projection parameter GeoKeys.";
+            return false;
+        }
+
+        if (std::fabs(metadata.latitudeOfOrigin) > 1e-10)
+        {
+            error =
+                "This task supports UTM, whose latitude of natural origin "
+                "must be the equator.";
+            return false;
+        }
+
+        m_type = UTM;
+        m_epsgCode = 0;
+        m_latitudeOfOriginDeg = metadata.latitudeOfOrigin;
+        m_longitudeOfOriginDeg = metadata.longitudeOfOrigin;
+        m_scaleFactor = metadata.scaleAtNaturalOrigin;
+        m_falseEasting = metadata.falseEasting;
+        m_falseNorthing = metadata.falseNorthing;
+
+        m_utmZone = static_cast<int>(
+            std::floor((m_longitudeOfOriginDeg + 183.0) / 6.0 + 0.5)
+        );
+
+        if (m_utmZone < 1 || m_utmZone > 60)
+            m_utmZone = 0;
+
+        m_northHemisphere = m_falseNorthing < 5000000.0;
+        return true;
+    }
+
+    // GeoTIFF CT_PolarStereographic.
+    if (metadata.coordinateTransform == 15)
+    {
+        if (!metadata.hasLatitudeOfOrigin ||
+            !metadata.hasFalseEasting ||
+            !metadata.hasFalseNorthing)
+        {
+            error =
+                "User-defined Polar Stereographic is missing latitude of "
+                "origin or false grid coordinates.";
+            return false;
+        }
+
+        double longitudeOfOrigin = 0.0;
+
+        if (metadata.hasStraightVertPoleLongitude)
+            longitudeOfOrigin = metadata.straightVertPoleLongitude;
+        else if (metadata.hasLongitudeOfOrigin)
+            longitudeOfOrigin = metadata.longitudeOfOrigin;
+        else
+        {
+            error =
+                "User-defined Polar Stereographic is missing "
+                "ProjStraightVertPoleLongGeoKey/longitude of origin.";
+            return false;
+        }
+
+        const double latitudeParameter = metadata.latitudeOfOrigin;
+
+        m_type = UPS;
+        m_epsgCode = 0;
+        m_utmZone = 0;
+        m_northHemisphere = latitudeParameter >= 0.0;
+
+        // Internally the formulas use Polar Stereographic variant A
+        // with the natural origin at the pole. Some GeoTIFF writers store
+        // a non-polar latitude of true scale instead; convert that value
+        // to the equivalent scale factor at the pole.
+        m_latitudeOfOriginDeg = m_northHemisphere ? 90.0 : -90.0;
+        m_longitudeOfOriginDeg = longitudeOfOrigin;
+        m_falseEasting = metadata.falseEasting;
+        m_falseNorthing = metadata.falseNorthing;
+
+        if (std::fabs(latitudeParameter) >= 89.0)
+        {
+            if (metadata.hasScaleAtNaturalOrigin)
+            {
+                m_scaleFactor = metadata.scaleAtNaturalOrigin;
+            }
+            else if (approximately(m_falseEasting, 2000000.0, 0.01) &&
+                     approximately(m_falseNorthing, 2000000.0, 0.01))
+            {
+                // Standard UPS definition if a writer omitted the
+                // redundant scale GeoKey.
+                m_scaleFactor = 0.994;
+            }
+            else
+            {
+                error =
+                    "Polar Stereographic scale factor is missing.";
+                return false;
+            }
+        }
+        else
+        {
+            m_scaleFactor = polarScaleAtPole(latitudeParameter);
+        }
+
+        return true;
+    }
+
+    error = QString(
+        "Projected CRS is user-defined, but ProjCoordTransGeoKey=%1 "
+        "is not UTM/Transverse Mercator (1) or Polar Stereographic (15).")
+        .arg(metadata.coordinateTransform);
+    return false;
 }
 
 bool Projection::configureFromEpsg(int epsgCode, QString &error)
@@ -470,6 +688,9 @@ QString Projection::description() const
 {
     if (m_type == UTM)
     {
+        if (m_epsgCode == 0)
+            return QString("WGS84 / UTM (user-defined GeoTIFF)");
+
         return QString("WGS84 / UTM zone %1%2")
             .arg(m_utmZone)
             .arg(m_northHemisphere ? "N" : "S");
@@ -477,6 +698,9 @@ QString Projection::description() const
 
     if (m_type == UPS)
     {
+        if (m_epsgCode == 0)
+            return QString("WGS84 / Polar Stereographic (user-defined GeoTIFF)");
+
         return QString("WGS84 / UPS %1")
             .arg(m_northHemisphere ? "North" : "South");
     }
