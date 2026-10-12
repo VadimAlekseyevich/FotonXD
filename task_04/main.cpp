@@ -5,13 +5,7 @@
 #include <QCoreApplication>
 #include <QFileInfo>
 #include <QTextStream>
-
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
+#include <QTextCodec>
 
 #include <algorithm>
 #include <cmath>
@@ -50,17 +44,19 @@ void printUsage(QTextStream &out, const QString &programName)
 
 int main(int argc, char *argv[])
 {
-#ifdef Q_OS_WIN
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-#endif
-
     QCoreApplication app(argc, argv);
 
     QTextStream out(stdout);
     QTextStream err(stderr);
+
+#ifdef Q_OS_WIN
+    QTextCodec *consoleCodec = QTextCodec::codecForLocale();
+    out.setCodec(consoleCodec);
+    err.setCodec(consoleCodec);
+#else
     out.setCodec("UTF-8");
     err.setCodec("UTF-8");
+#endif
 
     const QStringList args = QCoreApplication::arguments();
 
