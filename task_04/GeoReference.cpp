@@ -17,7 +17,7 @@ bool GeoReference::initialize(const GeoTiffMetadata &metadata, QString &error)
         return false;
     }
 
-    if (!m_projection.configureFromEpsg(metadata.projectedCrs, error))
+    if (!m_projection.configureFromGeoTiff(metadata, error))
         return false;
 
     const double determinant =
