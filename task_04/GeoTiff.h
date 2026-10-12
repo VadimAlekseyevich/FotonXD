@@ -21,6 +21,29 @@ struct GeoTiffMetadata
     quint16 geographicType;
     quint16 projectedCrs;
 
+    quint16 ellipsoid;
+    quint16 coordinateTransform;
+    quint16 linearUnits;
+
+    double semiMajorAxis;
+    double inverseFlattening;
+
+    double latitudeOfOrigin;
+    double longitudeOfOrigin;
+    double straightVertPoleLongitude;
+    double scaleAtNaturalOrigin;
+    double falseEasting;
+    double falseNorthing;
+
+    bool hasSemiMajorAxis;
+    bool hasInverseFlattening;
+    bool hasLatitudeOfOrigin;
+    bool hasLongitudeOfOrigin;
+    bool hasStraightVertPoleLongitude;
+    bool hasScaleAtNaturalOrigin;
+    bool hasFalseEasting;
+    bool hasFalseNorthing;
+
     bool hasGeoTransform;
 };
 
