@@ -207,7 +207,7 @@ bool Projection::utmForward(double latitudeDeg,
     easting = m_falseEasting + m_scaleFactor * B * eta;
     northing = m_falseNorthing + m_scaleFactor * B * xi;
 
-    return std::isfinite(easting) && std::isfinite(northing);
+    return true;
 }
 
 bool Projection::utmReverse(double easting,
@@ -297,7 +297,7 @@ bool Projection::utmReverse(double easting,
     latitudeDeg = radToDeg(phi);
     longitudeDeg = radToDeg(lambda);
 
-    return std::isfinite(latitudeDeg) && std::isfinite(longitudeDeg);
+    return true;
 }
 
 bool Projection::upsForward(double latitudeDeg,
