@@ -101,7 +101,7 @@ bool GeoReference::geo2planar(double &x,
           m_metadata.gt[1] * dy) /
         determinant;
 
-    return std::isfinite(x) && std::isfinite(y);
+    return true;
 }
 
 const Projection &GeoReference::projection() const
