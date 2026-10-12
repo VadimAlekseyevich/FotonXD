@@ -31,13 +31,13 @@ double longitudeDelta(double value, double reference)
 
 void printUsage(QTextStream &out, const QString &programName)
 {
-    out << "Usage:" << Qt::endl;
+    out << "Usage:" << '\n';
     out << "  " << programName
-        << " <image.tif> <points.txt>" << Qt::endl;
-    out << Qt::endl;
-    out << "Example:" << Qt::endl;
+        << " <image.tif> <points.txt>" << '\n';
+    out << '\n';
+    out << "Example:" << '\n';
     out << "  " << programName
-        << " data/map.tiff data/map_points.txt" << Qt::endl;
+        << " data/map.tiff data/map_points.txt" << '\n';
 }
 }
 
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 
     if (!GeoTiffReader::read(imagePath, metadata, error))
     {
-        err << "GeoTIFF error: " << error << Qt::endl;
+        err << "GeoTIFF error: " << error << '\n';
         return 2;
     }
 
@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
 
     if (!geoReference.initialize(metadata, error))
     {
-        err << "Georeference error: " << error << Qt::endl;
+        err << "Georeference error: " << error << '\n';
         return 3;
     }
 
@@ -82,56 +82,56 @@ int main(int argc, char *argv[])
 
     if (!PointFile::read(pointsPath, points, error))
     {
-        err << "Points error: " << error << Qt::endl;
+        err << "Points error: " << error << '\n';
         return 4;
     }
 
     const Projection &projection = geoReference.projection();
 
-    out << "Image: " << QFileInfo(imagePath).fileName() << Qt::endl;
-    out << "Size: " << metadata.width << " x " << metadata.height << Qt::endl;
+    out << "Image: " << QFileInfo(imagePath).fileName() << '\n';
+    out << "Size: " << metadata.width << " x " << metadata.height << '\n';
     out << "Projected CRS: EPSG:" << projection.epsgCode()
-        << " (" << projection.description() << ")" << Qt::endl;
+        << " (" << projection.description() << ")" << '\n';
 
     if (metadata.geographicType != 0)
         out << "Geographic CRS GeoKey: EPSG:"
-            << metadata.geographicType << Qt::endl;
+            << metadata.geographicType << '\n';
 
-    out << Qt::endl;
-    out << "Raster -> projected affine transform:" << Qt::endl;
+    out << '\n';
+    out << "Raster -> projected affine transform:" << '\n';
     out << "  E = " << number(metadata.gt[0])
         << " + x * " << number(metadata.gt[1])
         << " + y * " << number(metadata.gt[2])
-        << Qt::endl;
+        << '\n';
     out << "  N = " << number(metadata.gt[3])
         << " + x * " << number(metadata.gt[4])
         << " + y * " << number(metadata.gt[5])
-        << Qt::endl;
+        << '\n';
 
-    out << Qt::endl;
-    out << "Projection parameters:" << Qt::endl;
+    out << '\n';
+    out << "Projection parameters:" << '\n';
     out << "  latitude of origin  = "
-        << number(projection.latitudeOfOriginDeg()) << " deg" << Qt::endl;
+        << number(projection.latitudeOfOriginDeg()) << " deg" << '\n';
     out << "  longitude of origin = "
-        << number(projection.longitudeOfOriginDeg()) << " deg" << Qt::endl;
+        << number(projection.longitudeOfOriginDeg()) << " deg" << '\n';
     out << "  scale factor        = "
-        << number(projection.scaleFactor()) << Qt::endl;
+        << number(projection.scaleFactor()) << '\n';
     out << "  false easting       = "
-        << number(projection.falseEasting()) << " m" << Qt::endl;
+        << number(projection.falseEasting()) << " m" << '\n';
     out << "  false northing      = "
-        << number(projection.falseNorthing()) << " m" << Qt::endl;
+        << number(projection.falseNorthing()) << " m" << '\n';
 
     if (projection.type() == Projection::UTM)
         out << "  UTM zone            = "
             << projection.utmZone()
             << (projection.northHemisphere() ? "N" : "S")
-            << Qt::endl;
+            << '\n';
 
-    out << Qt::endl;
+    out << '\n';
     out << "Pixel coordinates use (0,0) at the upper-left corner "
            "of the upper-left pixel."
-        << Qt::endl;
-    out << "Test points: " << points.size() << Qt::endl;
+        << '\n';
+    out << "Test points: " << points.size() << '\n';
 
     double maxLatitudeError = 0.0;
     double maxLongitudeError = 0.0;
@@ -152,7 +152,7 @@ int main(int argc, char *argv[])
                 longitude1))
         {
             err << "planar2geo failed for point "
-                << point.index << Qt::endl;
+                << point.index << '\n';
             return 5;
         }
 
@@ -167,7 +167,7 @@ int main(int argc, char *argv[])
                 longitude1))
         {
             err << "geo2planar failed for point "
-                << point.index << Qt::endl;
+                << point.index << '\n';
             return 6;
         }
 
@@ -183,7 +183,7 @@ int main(int argc, char *argv[])
                 point.longitude))
         {
             err << "geo2planar(reference) failed for point "
-                << point.index << Qt::endl;
+                << point.index << '\n';
             return 7;
         }
 
@@ -214,52 +214,52 @@ int main(int argc, char *argv[])
         maxPixelErrorY =
             std::max(maxPixelErrorY, std::fabs(dyReference));
 
-        out << Qt::endl;
-        out << "Point " << point.index << Qt::endl;
+        out << '\n';
+        out << "Point " << point.index << '\n';
 
         out << "  pixel reference : ("
             << number(point.x) << ", "
-            << number(point.y) << ")" << Qt::endl;
+            << number(point.y) << ")" << '\n';
 
         out << "  pixel round-trip: ("
             << number(x1) << ", "
-            << number(y1) << ")" << Qt::endl;
+            << number(y1) << ")" << '\n';
 
         out << "  pixel delta     : ("
             << number(dx) << ", "
-            << number(dy) << ")" << Qt::endl;
+            << number(dy) << ")" << '\n';
 
         out << "  geo reference   : (lat "
             << number(point.latitude) << ", lon "
-            << number(point.longitude) << ")" << Qt::endl;
+            << number(point.longitude) << ")" << '\n';
 
         out << "  geo calculated  : (lat "
             << number(latitude1) << ", lon "
-            << number(longitude1) << ")" << Qt::endl;
+            << number(longitude1) << ")" << '\n';
 
         out << "  geo delta       : (lat "
             << number(dLatitude) << ", lon "
-            << number(dLongitude) << ")" << Qt::endl;
+            << number(dLongitude) << ")" << '\n';
 
         out << "  reference geo -> pixel: ("
             << number(xFromReferenceGeo) << ", "
-            << number(yFromReferenceGeo) << ")" << Qt::endl;
+            << number(yFromReferenceGeo) << ")" << '\n';
 
         out << "  reference pixel delta : ("
             << number(dxReference) << ", "
-            << number(dyReference) << ")" << Qt::endl;
+            << number(dyReference) << ")" << '\n';
     }
 
-    out << Qt::endl;
-    out << "Maximum absolute errors:" << Qt::endl;
+    out << '\n';
+    out << "Maximum absolute errors:" << '\n';
     out << "  latitude  : " << number(maxLatitudeError)
-        << " deg" << Qt::endl;
+        << " deg" << '\n';
     out << "  longitude : " << number(maxLongitudeError)
-        << " deg" << Qt::endl;
+        << " deg" << '\n';
     out << "  pixel X   : " << number(maxPixelErrorX)
-        << " px" << Qt::endl;
+        << " px" << '\n';
     out << "  pixel Y   : " << number(maxPixelErrorY)
-        << " px" << Qt::endl;
+        << " px" << '\n';
 
     return 0;
 }
