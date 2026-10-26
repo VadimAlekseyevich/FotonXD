@@ -1006,7 +1006,9 @@ bool RasterContrast::process(const QString &inputPath,
     {
         noDataInteger =
             static_cast<qint64>(
-                std::floor(noDataValue + (noDataValue >= 0.0 ? 0.5 : -0.5))
+                noDataValue >= 0.0
+                    ? std::floor(noDataValue + 0.5)
+                    : std::ceil(noDataValue - 0.5)
             );
 
         if (std::fabs(noDataValue - static_cast<double>(noDataInteger)) > 1e-9 ||
