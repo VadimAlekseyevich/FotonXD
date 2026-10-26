@@ -16,6 +16,7 @@ const quint16 TagModelTiepoint = 33922;
 const quint16 TagModelTransformation = 34264;
 const quint16 TagGeoKeyDirectory = 34735;
 const quint16 TagGeoDoubleParams = 34736;
+const quint16 TagGdalNoData = 42113;
 
 const quint16 GeoKeyModelType = 1024;
 const quint16 GeoKeyRasterType = 1025;
@@ -260,6 +261,25 @@ bool doubleValues(QFile &file,
     return true;
 }
 
+bool asciiValue(QFile &file,
+                const TiffEntry &entry,
+                QString &value)
+{
+    if (entry.type != 2)
+        return false;
+
+    QByteArray data;
+    if (!entryData(file, entry, data))
+        return false;
+
+    const int zero = data.indexOf('\0');
+    if (zero >= 0)
+        data.truncate(zero);
+
+    value = QString::fromLatin1(data).trimmed();
+    return !value.isEmpty();
+}
+
 bool geoDoubleValue(const QVector<double> &doubleParams,
                     quint16 location,
                     quint16 count,
@@ -305,6 +325,7 @@ GeoTiffMetadata::GeoTiffMetadata()
       hasScaleAtNaturalOrigin(false),
       hasFalseEasting(false),
       hasFalseNorthing(false),
+      hasNoData(false),
       hasGeoTransform(false)
 {
     for (int i = 0; i < 6; ++i)
@@ -414,6 +435,17 @@ bool GeoTiffReader::read(const QString &filePath,
 
     metadata.width = static_cast<int>(width);
     metadata.height = static_cast<int>(height);
+
+    const TiffEntry *noDataEntry = findEntry(entries, TagGdalNoData);
+    if (noDataEntry)
+    {
+        QString noDataText;
+        if (asciiValue(file, *noDataEntry, noDataText))
+        {
+            metadata.noDataText = noDataText;
+            metadata.hasNoData = true;
+        }
+    }
 
     const TiffEntry *geoKeyEntry = findEntry(entries, TagGeoKeyDirectory);
     if (!geoKeyEntry)
