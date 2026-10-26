@@ -44,6 +44,9 @@ struct GeoTiffMetadata
     bool hasFalseEasting;
     bool hasFalseNorthing;
 
+    bool hasNoData;
+    QString noDataText;
+
     bool hasGeoTransform;
 };
 
