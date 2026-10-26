@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QVector>
 
@@ -965,6 +966,13 @@ bool RasterContrast::process(const QString &inputPath,
 {
     result = ContrastResult();
     error.clear();
+
+    if (QFileInfo(inputPath).absoluteFilePath() ==
+        QFileInfo(outputPath).absoluteFilePath())
+    {
+        error = "Output TIFF path must be different from the input TIFF path.";
+        return false;
+    }
 
     double noDataValue = 0.0;
     bool noDataNumeric = false;
