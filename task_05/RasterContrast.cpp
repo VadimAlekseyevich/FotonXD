@@ -6,601 +6,1037 @@
 #include <QTextStream>
 #include <QVector>
 
-#include <tiffio.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 namespace
 {
-struct ImageInfo
-{
-    uint32_t width;
-    uint32_t height;
-    uint16_t bitsPerSample;
-    uint16_t samplesPerPixel;
-    uint16_t sampleFormat;
-    uint16_t planarConfig;
-    uint16_t photometric;
-    uint16_t orientation;
+const quint16 TagImageWidth = 256;
+const quint16 TagImageLength = 257;
+const quint16 TagBitsPerSample = 258;
+const quint16 TagCompression = 259;
+const quint16 TagPhotometric = 262;
+const quint16 TagStripOffsets = 273;
+const quint16 TagOrientation = 274;
+const quint16 TagSamplesPerPixel = 277;
+const quint16 TagRowsPerStrip = 278;
+const quint16 TagStripByteCounts = 279;
+const quint16 TagPlanarConfig = 284;
+const quint16 TagPredictor = 317;
+const quint16 TagTileWidth = 322;
+const quint16 TagTileLength = 323;
+const quint16 TagTileOffsets = 324;
+const quint16 TagTileByteCounts = 325;
+const quint16 TagSampleFormat = 339;
 
-    bool tiled;
-    uint32_t tileWidth;
-    uint32_t tileLength;
-    uint32_t rowsPerStrip;
+const quint16 TypeByte = 1;
+const quint16 TypeAscii = 2;
+const quint16 TypeShort = 3;
+const quint16 TypeLong = 4;
+
+const quint16 CompressionNone = 1;
+const quint16 CompressionLzw = 5;
+const quint16 CompressionPackBits = 32773;
+
+const quint16 PhotometricMinIsWhite = 0;
+const quint16 PhotometricMinIsBlack = 1;
+const quint16 PhotometricRgb = 2;
+
+const quint16 PlanarContig = 1;
+const quint16 PlanarSeparate = 2;
+
+const quint16 SampleFormatUint = 1;
+const quint16 SampleFormatInt = 2;
+
+struct TiffEntry
+{
+    quint16 tag;
+    quint16 type;
+    quint32 count;
+    quint32 valueOffset;
+    QByteArray inlineValue;
 };
 
-TIFF *openTiff(const QString &path, const char *mode)
+struct ImageInfo
 {
-    const QByteArray localPath = QFile::encodeName(path);
-    return TIFFOpen(localPath.constData(), mode);
+    ImageInfo()
+        : littleEndian(true),
+          width(0),
+          height(0),
+          bitsPerSample(0),
+          samplesPerPixel(1),
+          sampleFormat(SampleFormatUint),
+          compression(CompressionNone),
+          photometric(PhotometricMinIsBlack),
+          planarConfig(PlanarContig),
+          predictor(1),
+          orientation(1),
+          rowsPerStrip(0)
+    {
+    }
+
+    bool littleEndian;
+    quint32 width;
+    quint32 height;
+    quint16 bitsPerSample;
+    quint16 samplesPerPixel;
+    quint16 sampleFormat;
+    quint16 compression;
+    quint16 photometric;
+    quint16 planarConfig;
+    quint16 predictor;
+    quint16 orientation;
+    quint32 rowsPerStrip;
+    QVector<quint32> stripOffsets;
+    QVector<quint32> stripByteCounts;
+};
+
+quint16 readU16(const QByteArray &data, int offset, bool littleEndian)
+{
+    const quint16 a = static_cast<quint8>(data.at(offset));
+    const quint16 b = static_cast<quint8>(data.at(offset + 1));
+
+    return littleEndian
+        ? static_cast<quint16>(a | (b << 8))
+        : static_cast<quint16>((a << 8) | b);
 }
 
-bool readInfo(TIFF *tif, ImageInfo &info, QString &error)
+quint32 readU32(const QByteArray &data, int offset, bool littleEndian)
 {
-    std::memset(&info, 0, sizeof(info));
+    quint32 result = 0;
 
-    if (!TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &info.width) ||
-        !TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &info.height))
+    if (littleEndian)
     {
-        error = "TIFF image size tags are missing";
+        result =
+            static_cast<quint32>(static_cast<quint8>(data.at(offset))) |
+            (static_cast<quint32>(static_cast<quint8>(data.at(offset + 1))) << 8) |
+            (static_cast<quint32>(static_cast<quint8>(data.at(offset + 2))) << 16) |
+            (static_cast<quint32>(static_cast<quint8>(data.at(offset + 3))) << 24);
+    }
+    else
+    {
+        result =
+            (static_cast<quint32>(static_cast<quint8>(data.at(offset))) << 24) |
+            (static_cast<quint32>(static_cast<quint8>(data.at(offset + 1))) << 16) |
+            (static_cast<quint32>(static_cast<quint8>(data.at(offset + 2))) << 8) |
+            static_cast<quint32>(static_cast<quint8>(data.at(offset + 3)));
+    }
+
+    return result;
+}
+
+void appendU16LE(QByteArray &data, quint16 value)
+{
+    data.append(static_cast<char>(value & 0xff));
+    data.append(static_cast<char>((value >> 8) & 0xff));
+}
+
+void appendU32LE(QByteArray &data, quint32 value)
+{
+    data.append(static_cast<char>(value & 0xff));
+    data.append(static_cast<char>((value >> 8) & 0xff));
+    data.append(static_cast<char>((value >> 16) & 0xff));
+    data.append(static_cast<char>((value >> 24) & 0xff));
+}
+
+bool readAt(QFile &file, quint32 offset, quint32 size, QByteArray &data)
+{
+    if (!file.seek(offset))
+        return false;
+
+    data = file.read(size);
+    return data.size() == static_cast<int>(size);
+}
+
+int typeSize(quint16 type)
+{
+    switch (type)
+    {
+    case TypeByte:
+    case TypeAscii:
+        return 1;
+    case TypeShort:
+        return 2;
+    case TypeLong:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+bool entryData(QFile &file,
+               const TiffEntry &entry,
+               QByteArray &data)
+{
+    const int itemSize = typeSize(entry.type);
+
+    if (itemSize == 0)
+        return false;
+
+    const quint64 total =
+        static_cast<quint64>(itemSize) * entry.count;
+
+    if (total == 0 || total > 64u * 1024u * 1024u)
+        return false;
+
+    if (total <= 4)
+    {
+        data = entry.inlineValue.left(static_cast<int>(total));
+        return true;
+    }
+
+    return readAt(file,
+                  entry.valueOffset,
+                  static_cast<quint32>(total),
+                  data);
+}
+
+const TiffEntry *findEntry(const QVector<TiffEntry> &entries,
+                           quint16 tag)
+{
+    for (int i = 0; i < entries.size(); ++i)
+    {
+        if (entries.at(i).tag == tag)
+            return &entries.at(i);
+    }
+
+    return 0;
+}
+
+bool unsignedValues(QFile &file,
+                    const TiffEntry &entry,
+                    bool littleEndian,
+                    QVector<quint32> &values)
+{
+    QByteArray data;
+
+    if (!entryData(file, entry, data))
+        return false;
+
+    values.clear();
+    values.reserve(static_cast<int>(entry.count));
+
+    if (entry.type == TypeShort)
+    {
+        for (quint32 i = 0; i < entry.count; ++i)
+            values.push_back(readU16(data, static_cast<int>(i * 2u), littleEndian));
+
+        return true;
+    }
+
+    if (entry.type == TypeLong)
+    {
+        for (quint32 i = 0; i < entry.count; ++i)
+            values.push_back(readU32(data, static_cast<int>(i * 4u), littleEndian));
+
+        return true;
+    }
+
+    return false;
+}
+
+bool firstUnsigned(QFile &file,
+                   const QVector<TiffEntry> &entries,
+                   quint16 tag,
+                   bool littleEndian,
+                   quint32 defaultValue,
+                   quint32 &value)
+{
+    const TiffEntry *entry = findEntry(entries, tag);
+
+    if (!entry)
+    {
+        value = defaultValue;
+        return true;
+    }
+
+    QVector<quint32> values;
+
+    if (!unsignedValues(file, *entry, littleEndian, values) ||
+        values.isEmpty())
+    {
         return false;
     }
 
-    TIFFGetFieldDefaulted(tif, TIFFTAG_BITSPERSAMPLE, &info.bitsPerSample);
-    TIFFGetFieldDefaulted(tif, TIFFTAG_SAMPLESPERPIXEL, &info.samplesPerPixel);
-    TIFFGetFieldDefaulted(tif, TIFFTAG_SAMPLEFORMAT, &info.sampleFormat);
-    TIFFGetFieldDefaulted(tif, TIFFTAG_PLANARCONFIG, &info.planarConfig);
-    TIFFGetFieldDefaulted(tif, TIFFTAG_ORIENTATION, &info.orientation);
+    value = values.first();
+    return true;
+}
 
-    if (!TIFFGetField(tif, TIFFTAG_PHOTOMETRIC, &info.photometric))
-        info.photometric =
-            (info.samplesPerPixel == 1) ? PHOTOMETRIC_MINISBLACK : PHOTOMETRIC_RGB;
-
-    if (info.bitsPerSample != 8 && info.bitsPerSample != 16)
+bool parseTiff(QFile &file,
+               ImageInfo &info,
+               QString &error)
+{
+    if (!file.seek(0))
     {
-        error = QString("Unsupported BitsPerSample=%1. Task 5 supports 8-bit and 16-bit integer TIFF.")
+        error = "Cannot seek to TIFF header";
+        return false;
+    }
+
+    const QByteArray header = file.read(8);
+
+    if (header.size() != 8)
+    {
+        error = "Invalid TIFF header";
+        return false;
+    }
+
+    if (header.at(0) == 'I' && header.at(1) == 'I')
+        info.littleEndian = true;
+    else if (header.at(0) == 'M' && header.at(1) == 'M')
+        info.littleEndian = false;
+    else
+    {
+        error = "Invalid TIFF byte order";
+        return false;
+    }
+
+    if (readU16(header, 2, info.littleEndian) != 42)
+    {
+        error = "Only classic TIFF is supported";
+        return false;
+    }
+
+    const quint32 ifdOffset =
+        readU32(header, 4, info.littleEndian);
+
+    QByteArray countBytes;
+
+    if (!readAt(file, ifdOffset, 2, countBytes))
+    {
+        error = "Cannot read TIFF IFD";
+        return false;
+    }
+
+    const quint16 count =
+        readU16(countBytes, 0, info.littleEndian);
+
+    QVector<TiffEntry> entries;
+    entries.reserve(count);
+
+    for (quint16 i = 0; i < count; ++i)
+    {
+        QByteArray raw;
+
+        if (!readAt(file,
+                    ifdOffset + 2u + static_cast<quint32>(i) * 12u,
+                    12,
+                    raw))
+        {
+            error = "Cannot read TIFF directory entry";
+            return false;
+        }
+
+        TiffEntry entry;
+        entry.tag = readU16(raw, 0, info.littleEndian);
+        entry.type = readU16(raw, 2, info.littleEndian);
+        entry.count = readU32(raw, 4, info.littleEndian);
+        entry.valueOffset = readU32(raw, 8, info.littleEndian);
+        entry.inlineValue = raw.mid(8, 4);
+
+        entries.push_back(entry);
+    }
+
+    quint32 value = 0;
+
+    if (!firstUnsigned(file, entries, TagImageWidth,
+                       info.littleEndian, 0, value) ||
+        value == 0)
+    {
+        error = "Invalid or missing TIFF ImageWidth";
+        return false;
+    }
+    info.width = value;
+
+    if (!firstUnsigned(file, entries, TagImageLength,
+                       info.littleEndian, 0, value) ||
+        value == 0)
+    {
+        error = "Invalid or missing TIFF ImageLength";
+        return false;
+    }
+    info.height = value;
+
+    if (!firstUnsigned(file, entries, TagSamplesPerPixel,
+                       info.littleEndian, 1, value))
+    {
+        error = "Invalid SamplesPerPixel";
+        return false;
+    }
+    info.samplesPerPixel = static_cast<quint16>(value);
+
+    const TiffEntry *bitsEntry = findEntry(entries, TagBitsPerSample);
+
+    if (!bitsEntry)
+    {
+        info.bitsPerSample = 1;
+    }
+    else
+    {
+        QVector<quint32> bits;
+
+        if (!unsignedValues(file, *bitsEntry,
+                            info.littleEndian, bits) ||
+            bits.isEmpty())
+        {
+            error = "Invalid BitsPerSample";
+            return false;
+        }
+
+        info.bitsPerSample =
+            static_cast<quint16>(bits.first());
+
+        for (int i = 1; i < bits.size(); ++i)
+        {
+            if (bits.at(i) != info.bitsPerSample)
+            {
+                error = "Different BitsPerSample values per band are not supported";
+                return false;
+            }
+        }
+    }
+
+    if (!firstUnsigned(file, entries, TagCompression,
+                       info.littleEndian, CompressionNone, value))
+    {
+        error = "Invalid Compression";
+        return false;
+    }
+    info.compression = static_cast<quint16>(value);
+
+    if (!firstUnsigned(file, entries, TagPhotometric,
+                       info.littleEndian,
+                       info.samplesPerPixel == 1
+                           ? PhotometricMinIsBlack
+                           : PhotometricRgb,
+                       value))
+    {
+        error = "Invalid PhotometricInterpretation";
+        return false;
+    }
+    info.photometric = static_cast<quint16>(value);
+
+    if (!firstUnsigned(file, entries, TagPlanarConfig,
+                       info.littleEndian, PlanarContig, value))
+    {
+        error = "Invalid PlanarConfiguration";
+        return false;
+    }
+    info.planarConfig = static_cast<quint16>(value);
+
+    if (!firstUnsigned(file, entries, TagPredictor,
+                       info.littleEndian, 1, value))
+    {
+        error = "Invalid Predictor";
+        return false;
+    }
+    info.predictor = static_cast<quint16>(value);
+
+    if (!firstUnsigned(file, entries, TagOrientation,
+                       info.littleEndian, 1, value))
+    {
+        error = "Invalid Orientation";
+        return false;
+    }
+    info.orientation = static_cast<quint16>(value);
+
+    if (!firstUnsigned(file, entries, TagRowsPerStrip,
+                       info.littleEndian, info.height, value) ||
+        value == 0)
+    {
+        error = "Invalid RowsPerStrip";
+        return false;
+    }
+    info.rowsPerStrip = value;
+
+    if (!firstUnsigned(file, entries, TagSampleFormat,
+                       info.littleEndian, SampleFormatUint, value))
+    {
+        error = "Invalid SampleFormat";
+        return false;
+    }
+    info.sampleFormat = static_cast<quint16>(value);
+
+    if (findEntry(entries, TagTileWidth) ||
+        findEntry(entries, TagTileLength) ||
+        findEntry(entries, TagTileOffsets) ||
+        findEntry(entries, TagTileByteCounts))
+    {
+        error = "Tiled TIFF is not supported by the built-in task reader yet";
+        return false;
+    }
+
+    const TiffEntry *offsetEntry =
+        findEntry(entries, TagStripOffsets);
+    const TiffEntry *countEntry =
+        findEntry(entries, TagStripByteCounts);
+
+    if (!offsetEntry || !countEntry ||
+        !unsignedValues(file, *offsetEntry,
+                        info.littleEndian, info.stripOffsets) ||
+        !unsignedValues(file, *countEntry,
+                        info.littleEndian, info.stripByteCounts) ||
+        info.stripOffsets.size() != info.stripByteCounts.size())
+    {
+        error = "Invalid TIFF strip offsets/byte counts";
+        return false;
+    }
+
+    if (info.bitsPerSample != 8 &&
+        info.bitsPerSample != 16)
+    {
+        error = QString("Unsupported BitsPerSample=%1; supported: 8 or 16")
                     .arg(info.bitsPerSample);
         return false;
     }
 
-    if (info.sampleFormat != SAMPLEFORMAT_UINT &&
-        info.sampleFormat != SAMPLEFORMAT_INT)
+    if (info.samplesPerPixel != 1 &&
+        info.samplesPerPixel != 3)
     {
-        error = QString("Unsupported SampleFormat=%1. Task 5 supports integer rasters.")
+        error = QString("Unsupported SamplesPerPixel=%1; supported: grayscale or RGB")
+                    .arg(info.samplesPerPixel);
+        return false;
+    }
+
+    if (info.sampleFormat != SampleFormatUint &&
+        info.sampleFormat != SampleFormatInt)
+    {
+        error = QString("Unsupported SampleFormat=%1; integer raster required")
                     .arg(info.sampleFormat);
         return false;
     }
 
-    if (info.samplesPerPixel != 1 && info.samplesPerPixel != 3)
+    if (info.planarConfig != PlanarContig &&
+        info.planarConfig != PlanarSeparate)
     {
-        error = QString("Unsupported SamplesPerPixel=%1. Supported: grayscale (1) and RGB (3).")
-                    .arg(info.samplesPerPixel);
+        error = QString("Unsupported PlanarConfiguration=%1")
+                    .arg(info.planarConfig);
+        return false;
+    }
+
+    if (info.compression != CompressionNone &&
+        info.compression != CompressionLzw &&
+        info.compression != CompressionPackBits)
+    {
+        error = QString("Unsupported TIFF compression=%1. Supported: none, LZW, PackBits.")
+                    .arg(info.compression);
+        return false;
+    }
+
+    if (info.predictor != 1 && info.predictor != 2)
+    {
+        error = QString("Unsupported TIFF Predictor=%1")
+                    .arg(info.predictor);
+        return false;
+    }
+
+    if (info.orientation != 1)
+    {
+        error = QString("Unsupported TIFF Orientation=%1; expected top-left")
+                    .arg(info.orientation);
         return false;
     }
 
     if (info.samplesPerPixel == 1)
     {
-        if (info.photometric != PHOTOMETRIC_MINISBLACK &&
-            info.photometric != PHOTOMETRIC_MINISWHITE)
+        if (info.photometric != PhotometricMinIsBlack &&
+            info.photometric != PhotometricMinIsWhite)
         {
-            error = QString("Unsupported grayscale PhotometricInterpretation=%1.")
+            error = QString("Unsupported grayscale PhotometricInterpretation=%1")
                         .arg(info.photometric);
             return false;
         }
     }
-    else if (info.photometric != PHOTOMETRIC_RGB)
+    else if (info.photometric != PhotometricRgb)
     {
-        error = QString("Three-band TIFF must use RGB photometric interpretation; got %1.")
+        error = QString("RGB raster expected PhotometricInterpretation=2, got %1")
                     .arg(info.photometric);
         return false;
     }
 
-    if (info.orientation != ORIENTATION_TOPLEFT)
+    return true;
+}
+
+bool decodePackBits(const QByteArray &input,
+                    int expectedSize,
+                    QByteArray &output,
+                    QString &error)
+{
+    output.clear();
+    output.reserve(expectedSize);
+
+    int i = 0;
+
+    while (i < input.size() &&
+           output.size() < expectedSize)
     {
-        error = QString("Unsupported TIFF orientation=%1. Expected top-left orientation.")
-                    .arg(info.orientation);
+        const qint8 n =
+            static_cast<qint8>(input.at(i++));
+
+        if (n >= 0)
+        {
+            const int count = static_cast<int>(n) + 1;
+
+            if (i + count > input.size())
+            {
+                error = "Invalid PackBits literal run";
+                return false;
+            }
+
+            output.append(input.constData() + i, count);
+            i += count;
+        }
+        else if (n >= -127)
+        {
+            if (i >= input.size())
+            {
+                error = "Invalid PackBits repeat run";
+                return false;
+            }
+
+            const char value = input.at(i++);
+            const int count = 1 - static_cast<int>(n);
+
+            for (int k = 0; k < count; ++k)
+                output.append(value);
+        }
+    }
+
+    if (output.size() < expectedSize)
+    {
+        error = QString("PackBits decoded only %1 of %2 bytes")
+                    .arg(output.size())
+                    .arg(expectedSize);
         return false;
     }
 
-    info.tiled = TIFFIsTiled(tif) != 0;
-
-    if (info.tiled)
-    {
-        if (!TIFFGetField(tif, TIFFTAG_TILEWIDTH, &info.tileWidth) ||
-            !TIFFGetField(tif, TIFFTAG_TILELENGTH, &info.tileLength))
-        {
-            error = "Tiled TIFF is missing TileWidth/TileLength";
-            return false;
-        }
-    }
-    else
-    {
-        TIFFGetFieldDefaulted(tif, TIFFTAG_ROWSPERSTRIP, &info.rowsPerStrip);
-
-        if (info.rowsPerStrip == 0)
-            info.rowsPerStrip = info.height;
-    }
+    if (output.size() > expectedSize)
+        output.truncate(expectedSize);
 
     return true;
 }
 
-qint64 minSampleValue(const ImageInfo &info)
+class MsbBitReader
 {
-    if (info.sampleFormat == SAMPLEFORMAT_INT)
-        return -(static_cast<qint64>(1) << (info.bitsPerSample - 1));
+public:
+    explicit MsbBitReader(const QByteArray &data)
+        : m_data(data),
+          m_bitPosition(0)
+    {
+    }
+
+    bool read(int bits, int &value)
+    {
+        if (bits <= 0 ||
+            m_bitPosition + bits > m_data.size() * 8)
+        {
+            return false;
+        }
+
+        value = 0;
+
+        for (int i = 0; i < bits; ++i)
+        {
+            const int byteIndex = m_bitPosition / 8;
+            const int bitIndex = 7 - (m_bitPosition % 8);
+            const int bit =
+                (static_cast<quint8>(m_data.at(byteIndex)) >> bitIndex) & 1;
+
+            value = (value << 1) | bit;
+            ++m_bitPosition;
+        }
+
+        return true;
+    }
+
+private:
+    const QByteArray &m_data;
+    int m_bitPosition;
+};
+
+bool decodeLzw(const QByteArray &input,
+               int expectedSize,
+               QByteArray &output,
+               QString &error)
+{
+    QVector<QByteArray> dictionary(4096);
+
+    for (int i = 0; i < 256; ++i)
+        dictionary[i] = QByteArray(1, static_cast<char>(i));
+
+    MsbBitReader reader(input);
+    output.clear();
+    output.reserve(expectedSize);
+
+    int codeSize = 9;
+    int nextCode = 258;
+    int previousCode = -1;
+
+    while (output.size() < expectedSize)
+    {
+        int code = 0;
+
+        if (!reader.read(codeSize, code))
+            break;
+
+        if (code == 256)
+        {
+            codeSize = 9;
+            nextCode = 258;
+            previousCode = -1;
+            continue;
+        }
+
+        if (code == 257)
+            break;
+
+        QByteArray current;
+
+        if (code < nextCode && !dictionary.at(code).isEmpty())
+        {
+            current = dictionary.at(code);
+        }
+        else if (code == nextCode && previousCode >= 0)
+        {
+            current = dictionary.at(previousCode);
+            current.append(current.at(0));
+        }
+        else
+        {
+            error = QString("Invalid TIFF LZW code %1").arg(code);
+            return false;
+        }
+
+        output.append(current);
+
+        if (previousCode >= 0 && nextCode < 4096)
+        {
+            QByteArray added = dictionary.at(previousCode);
+            added.append(current.at(0));
+            dictionary[nextCode++] = added;
+
+            // TIFF LZW uses "early change".
+            if (codeSize < 12 &&
+                nextCode == ((1 << codeSize) - 1))
+            {
+                ++codeSize;
+            }
+        }
+
+        previousCode = code;
+    }
+
+    if (output.size() < expectedSize)
+    {
+        error = QString("LZW decoded only %1 of %2 bytes")
+                    .arg(output.size())
+                    .arg(expectedSize);
+        return false;
+    }
+
+    if (output.size() > expectedSize)
+        output.truncate(expectedSize);
+
+    return true;
+}
+
+bool decodeSegment(const QByteArray &encoded,
+                   quint16 compression,
+                   int expectedSize,
+                   QByteArray &decoded,
+                   QString &error)
+{
+    if (compression == CompressionNone)
+    {
+        if (encoded.size() < expectedSize)
+        {
+            error = QString("Uncompressed TIFF strip has %1 bytes, expected %2")
+                        .arg(encoded.size())
+                        .arg(expectedSize);
+            return false;
+        }
+
+        decoded = encoded.left(expectedSize);
+        return true;
+    }
+
+    if (compression == CompressionPackBits)
+        return decodePackBits(encoded, expectedSize, decoded, error);
+
+    if (compression == CompressionLzw)
+        return decodeLzw(encoded, expectedSize, decoded, error);
+
+    error = QString("Unsupported TIFF compression=%1")
+                .arg(compression);
+    return false;
+}
+
+quint32 rawSample(const QByteArray &data,
+                  int sampleIndex,
+                  int bitsPerSample,
+                  bool littleEndian)
+{
+    if (bitsPerSample == 8)
+        return static_cast<quint8>(data.at(sampleIndex));
+
+    const int offset = sampleIndex * 2;
+    return readU16(data, offset, littleEndian);
+}
+
+void setRawSample(QByteArray &data,
+                  int sampleIndex,
+                  int bitsPerSample,
+                  bool littleEndian,
+                  quint32 value)
+{
+    if (bitsPerSample == 8)
+    {
+        data[sampleIndex] =
+            static_cast<char>(value & 0xff);
+        return;
+    }
+
+    const int offset = sampleIndex * 2;
+    const quint16 v = static_cast<quint16>(value & 0xffff);
+
+    if (littleEndian)
+    {
+        data[offset] = static_cast<char>(v & 0xff);
+        data[offset + 1] =
+            static_cast<char>((v >> 8) & 0xff);
+    }
+    else
+    {
+        data[offset] =
+            static_cast<char>((v >> 8) & 0xff);
+        data[offset + 1] = static_cast<char>(v & 0xff);
+    }
+}
+
+void reverseHorizontalPredictor(QByteArray &data,
+                                quint32 width,
+                                quint32 rows,
+                                quint16 components,
+                                quint16 bitsPerSample,
+                                bool littleEndian)
+{
+    if (components == 0)
+        return;
+
+    const quint32 mask =
+        bitsPerSample == 8 ? 0xffu : 0xffffu;
+
+    for (quint32 row = 0; row < rows; ++row)
+    {
+        const quint32 rowBase =
+            row * width * components;
+
+        for (quint32 x = 1; x < width; ++x)
+        {
+            for (quint16 c = 0; c < components; ++c)
+            {
+                const int currentIndex =
+                    static_cast<int>(
+                        rowBase + x * components + c
+                    );
+
+                const int previousIndex =
+                    currentIndex - components;
+
+                const quint32 current =
+                    rawSample(data,
+                              currentIndex,
+                              bitsPerSample,
+                              littleEndian);
+
+                const quint32 previous =
+                    rawSample(data,
+                              previousIndex,
+                              bitsPerSample,
+                              littleEndian);
+
+                setRawSample(data,
+                             currentIndex,
+                             bitsPerSample,
+                             littleEndian,
+                             (current + previous) & mask);
+            }
+        }
+    }
+}
+
+qint64 numericSample(const QByteArray &data,
+                     int sampleIndex,
+                     const ImageInfo &info)
+{
+    const quint32 raw =
+        rawSample(data,
+                  sampleIndex,
+                  info.bitsPerSample,
+                  info.littleEndian);
+
+    if (info.sampleFormat == SampleFormatUint)
+        return static_cast<qint64>(raw);
+
+    if (info.bitsPerSample == 8)
+        return static_cast<qint8>(raw & 0xff);
+
+    return static_cast<qint16>(raw & 0xffff);
+}
+
+qint64 minimumSample(const ImageInfo &info)
+{
+    if (info.sampleFormat == SampleFormatInt)
+        return info.bitsPerSample == 8 ? -128 : -32768;
 
     return 0;
 }
 
-qint64 maxSampleValue(const ImageInfo &info)
-{
-    if (info.sampleFormat == SAMPLEFORMAT_INT)
-        return (static_cast<qint64>(1) << (info.bitsPerSample - 1)) - 1;
-
-    return (static_cast<qint64>(1) << info.bitsPerSample) - 1;
-}
-
 int histogramSize(const ImageInfo &info)
 {
-    return 1 << info.bitsPerSample;
+    return info.bitsPerSample == 8 ? 256 : 65536;
 }
 
-int bytesPerSample(const ImageInfo &info)
+bool readDecodedStrip(QFile &file,
+                      const ImageInfo &info,
+                      int stripIndex,
+                      quint32 rows,
+                      quint16 components,
+                      QByteArray &decoded,
+                      QString &error)
 {
-    return info.bitsPerSample / 8;
-}
-
-qint64 decodeSample(const char *data,
-                    int elementIndex,
-                    const ImageInfo &info)
-{
-    if (info.bitsPerSample == 8)
+    if (stripIndex < 0 ||
+        stripIndex >= info.stripOffsets.size())
     {
-        if (info.sampleFormat == SAMPLEFORMAT_INT)
-        {
-            qint8 value = 0;
-            std::memcpy(&value, data + elementIndex, 1);
-            return value;
-        }
-
-        quint8 value = 0;
-        std::memcpy(&value, data + elementIndex, 1);
-        return value;
+        error = QString("TIFF strip index %1 is out of range")
+                    .arg(stripIndex);
+        return false;
     }
 
-    if (info.sampleFormat == SAMPLEFORMAT_INT)
+    QByteArray encoded;
+
+    if (!readAt(file,
+                info.stripOffsets.at(stripIndex),
+                info.stripByteCounts.at(stripIndex),
+                encoded))
     {
-        qint16 value = 0;
-        std::memcpy(&value,
-                    data + elementIndex * static_cast<int>(sizeof(qint16)),
-                    sizeof(value));
-        return value;
+        error = QString("Cannot read TIFF strip %1")
+                    .arg(stripIndex);
+        return false;
     }
 
-    quint16 value = 0;
-    std::memcpy(&value,
-                data + elementIndex * static_cast<int>(sizeof(quint16)),
-                sizeof(value));
-    return value;
+    const quint64 expected64 =
+        static_cast<quint64>(rows) *
+        info.width *
+        components *
+        (info.bitsPerSample / 8);
+
+    if (expected64 > 0x7fffffffULL)
+    {
+        error = "TIFF strip is too large";
+        return false;
+    }
+
+    if (!decodeSegment(encoded,
+                       info.compression,
+                       static_cast<int>(expected64),
+                       decoded,
+                       error))
+    {
+        return false;
+    }
+
+    if (info.predictor == 2)
+    {
+        reverseHorizontalPredictor(decoded,
+                                   info.width,
+                                   rows,
+                                   components,
+                                   info.bitsPerSample,
+                                   info.littleEndian);
+    }
+
+    return true;
 }
 
-int histogramIndex(qint64 value, const ImageInfo &info)
+bool noDataMatches(qint64 value,
+                   bool hasNoData,
+                   qint64 noData)
 {
-    return static_cast<int>(value - minSampleValue(info));
+    return hasNoData && value == noData;
 }
 
-bool isNoData(qint64 value,
-              bool hasNoData,
-              qint64 noDataInteger)
-{
-    return hasNoData && value == noDataInteger;
-}
-
-void reportProgress(QTextStream &out,
-                    const QString &phase,
-                    int percent,
-                    int &lastReported)
+void progress(QTextStream &out,
+              const QString &phase,
+              int percent,
+              int &last)
 {
     const int bucket = (percent / 10) * 10;
 
-    if (bucket <= lastReported)
+    if (bucket <= last)
         return;
 
-    lastReported = bucket;
+    last = bucket;
     out << phase << ": " << bucket << "%\n";
     out.flush();
 }
 
-bool readTile(TIFF *tif,
-              QByteArray &buffer,
-              uint32_t x,
-              uint32_t y,
-              uint16_t sample,
-              QString &error)
+ContrastBandStats limitsFromHistogram(
+    const QVector<quint64> &histogram,
+    quint64 validCount,
+    qint64 minimum)
 {
-    const tsize_t size = TIFFTileSize(tif);
-
-    if (size <= 0)
-    {
-        error = "Invalid TIFF tile size";
-        return false;
-    }
-
-    buffer.resize(static_cast<int>(size));
-
-    if (TIFFReadTile(tif,
-                     buffer.data(),
-                     x,
-                     y,
-                     0,
-                     sample) < 0)
-    {
-        error = QString("Failed to decode TIFF tile at (%1,%2), sample %3")
-                    .arg(x)
-                    .arg(y)
-                    .arg(sample);
-        return false;
-    }
-
-    return true;
-}
-
-bool readStrip(TIFF *tif,
-               QByteArray &buffer,
-               tstrip_t strip,
-               QString &error)
-{
-    const tsize_t size = TIFFStripSize(tif);
-
-    if (size <= 0)
-    {
-        error = "Invalid TIFF strip size";
-        return false;
-    }
-
-    buffer.resize(static_cast<int>(size));
-
-    const tsize_t decoded =
-        TIFFReadEncodedStrip(tif, strip, buffer.data(), size);
-
-    if (decoded < 0)
-    {
-        error = QString("Failed to decode TIFF strip %1")
-                    .arg(static_cast<qulonglong>(strip));
-        return false;
-    }
-
-    buffer.resize(static_cast<int>(decoded));
-    return true;
-}
-
-bool addHistogramValue(qint64 value,
-                       int sample,
-                       const ImageInfo &info,
-                       bool hasNoData,
-                       qint64 noDataInteger,
-                       QVector<QVector<quint64> > &histograms,
-                       QVector<quint64> &validCounts)
-{
-    if (isNoData(value, hasNoData, noDataInteger))
-        return true;
-
-    const int index = histogramIndex(value, info);
-
-    if (index < 0 || index >= histograms.at(sample).size())
-        return false;
-
-    ++histograms[sample][index];
-    ++validCounts[sample];
-    return true;
-}
-
-bool buildHistogramsTiled(TIFF *tif,
-                          const ImageInfo &info,
-                          bool hasNoData,
-                          qint64 noDataInteger,
-                          QVector<QVector<quint64> > &histograms,
-                          QVector<quint64> &validCounts,
-                          QTextStream &out,
-                          QString &error)
-{
-    QByteArray tile;
-    QVector<QByteArray> separateTiles(info.samplesPerPixel);
-
-    const uint32_t tilesX =
-        (info.width + info.tileWidth - 1) / info.tileWidth;
-    const uint32_t tilesY =
-        (info.height + info.tileLength - 1) / info.tileLength;
-    const quint64 totalTiles =
-        static_cast<quint64>(tilesX) * static_cast<quint64>(tilesY);
-
-    quint64 done = 0;
-    int lastProgress = -10;
-
-    for (uint32_t y = 0; y < info.height; y += info.tileLength)
-    {
-        const uint32_t actualHeight =
-            std::min(info.tileLength, info.height - y);
-
-        for (uint32_t x = 0; x < info.width; x += info.tileWidth)
-        {
-            const uint32_t actualWidth =
-                std::min(info.tileWidth, info.width - x);
-
-            if (info.planarConfig == PLANARCONFIG_CONTIG)
-            {
-                if (!readTile(tif, tile, x, y, 0, error))
-                    return false;
-            }
-            else
-            {
-                for (uint16_t sample = 0;
-                     sample < info.samplesPerPixel;
-                     ++sample)
-                {
-                    if (!readTile(tif,
-                                  separateTiles[sample],
-                                  x,
-                                  y,
-                                  sample,
-                                  error))
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            for (uint32_t row = 0; row < actualHeight; ++row)
-            {
-                for (uint32_t col = 0; col < actualWidth; ++col)
-                {
-                    const int pixelIndex =
-                        static_cast<int>(row * info.tileWidth + col);
-
-                    for (uint16_t sample = 0;
-                         sample < info.samplesPerPixel;
-                         ++sample)
-                    {
-                        qint64 value = 0;
-
-                        if (info.planarConfig == PLANARCONFIG_CONTIG)
-                        {
-                            const int elementIndex =
-                                pixelIndex * info.samplesPerPixel + sample;
-
-                            value = decodeSample(tile.constData(),
-                                                 elementIndex,
-                                                 info);
-                        }
-                        else
-                        {
-                            value = decodeSample(
-                                separateTiles[sample].constData(),
-                                pixelIndex,
-                                info
-                            );
-                        }
-
-                        if (!addHistogramValue(value,
-                                               sample,
-                                               info,
-                                               hasNoData,
-                                               noDataInteger,
-                                               histograms,
-                                               validCounts))
-                        {
-                            error = "Decoded sample is outside expected integer range";
-                            return false;
-                        }
-                    }
-                }
-            }
-
-            ++done;
-            const int percent =
-                static_cast<int>((done * 100u) / totalTiles);
-            reportProgress(out,
-                           "Histogram",
-                           percent,
-                           lastProgress);
-        }
-    }
-
-    return true;
-}
-
-bool buildHistogramsStripped(TIFF *tif,
-                             const ImageInfo &info,
-                             bool hasNoData,
-                             qint64 noDataInteger,
-                             QVector<QVector<quint64> > &histograms,
-                             QVector<quint64> &validCounts,
-                             QTextStream &out,
-                             QString &error)
-{
-    QByteArray strip;
-    QVector<QByteArray> separateStrips(info.samplesPerPixel);
-
-    const uint32_t stripsY =
-        (info.height + info.rowsPerStrip - 1) / info.rowsPerStrip;
-
-    int lastProgress = -10;
-
-    for (uint32_t stripY = 0; stripY < stripsY; ++stripY)
-    {
-        const uint32_t y = stripY * info.rowsPerStrip;
-        const uint32_t actualRows =
-            std::min(info.rowsPerStrip, info.height - y);
-
-        if (info.planarConfig == PLANARCONFIG_CONTIG)
-        {
-            const tstrip_t stripIndex =
-                TIFFComputeStrip(tif, y, 0);
-
-            if (!readStrip(tif, strip, stripIndex, error))
-                return false;
-
-            const quint64 requiredBytes =
-                static_cast<quint64>(actualRows) *
-                info.width *
-                info.samplesPerPixel *
-                bytesPerSample(info);
-
-            if (static_cast<quint64>(strip.size()) < requiredBytes)
-            {
-                error = "Decoded TIFF strip is shorter than expected";
-                return false;
-            }
-        }
-        else
-        {
-            for (uint16_t sample = 0;
-                 sample < info.samplesPerPixel;
-                 ++sample)
-            {
-                const tstrip_t stripIndex =
-                    TIFFComputeStrip(tif, y, sample);
-
-                if (!readStrip(tif,
-                               separateStrips[sample],
-                               stripIndex,
-                               error))
-                {
-                    return false;
-                }
-
-                const quint64 requiredBytes =
-                    static_cast<quint64>(actualRows) *
-                    info.width *
-                    bytesPerSample(info);
-
-                if (static_cast<quint64>(
-                        separateStrips[sample].size()) < requiredBytes)
-                {
-                    error = "Decoded planar TIFF strip is shorter than expected";
-                    return false;
-                }
-            }
-        }
-
-        for (uint32_t row = 0; row < actualRows; ++row)
-        {
-            for (uint32_t col = 0; col < info.width; ++col)
-            {
-                const int pixelIndex =
-                    static_cast<int>(row * info.width + col);
-
-                for (uint16_t sample = 0;
-                     sample < info.samplesPerPixel;
-                     ++sample)
-                {
-                    qint64 value = 0;
-
-                    if (info.planarConfig == PLANARCONFIG_CONTIG)
-                    {
-                        const int elementIndex =
-                            pixelIndex * info.samplesPerPixel + sample;
-
-                        value = decodeSample(strip.constData(),
-                                             elementIndex,
-                                             info);
-                    }
-                    else
-                    {
-                        value = decodeSample(
-                            separateStrips[sample].constData(),
-                            pixelIndex,
-                            info
-                        );
-                    }
-
-                    if (!addHistogramValue(value,
-                                           sample,
-                                           info,
-                                           hasNoData,
-                                           noDataInteger,
-                                           histograms,
-                                           validCounts))
-                    {
-                        error = "Decoded sample is outside expected integer range";
-                        return false;
-                    }
-                }
-            }
-        }
-
-        const int percent =
-            static_cast<int>(
-                (static_cast<quint64>(stripY + 1) * 100u) /
-                stripsY
-            );
-
-        reportProgress(out,
-                       "Histogram",
-                       percent,
-                       lastProgress);
-    }
-
-    return true;
-}
-
-ContrastBandStats calculateLimits(const QVector<quint64> &histogram,
-                                  quint64 validCount,
-                                  qint64 minimumValue)
-{
-    ContrastBandStats stats;
-    stats.validSamples = validCount;
+    ContrastBandStats result;
+    result.validSamples = validCount;
 
     if (validCount == 0)
-        return stats;
+        return result;
 
     const quint64 clip =
         static_cast<quint64>(
-            std::floor(static_cast<double>(validCount) * 0.02)
+            std::floor(validCount * 0.02)
         );
 
-    quint64 cumulative = 0;
+    quint64 sum = 0;
     int lowIndex = 0;
 
     for (int i = 0; i < histogram.size(); ++i)
     {
-        cumulative += histogram.at(i);
+        sum += histogram.at(i);
 
-        if (cumulative > clip)
+        if (sum > clip)
         {
             lowIndex = i;
             break;
         }
     }
 
-    cumulative = 0;
+    sum = 0;
     int highIndex = histogram.size() - 1;
 
     for (int i = histogram.size() - 1; i >= 0; --i)
     {
-        cumulative += histogram.at(i);
+        sum += histogram.at(i);
 
-        if (cumulative > clip)
+        if (sum > clip)
         {
             highIndex = i;
             break;
         }
     }
 
-    stats.low = minimumValue + lowIndex;
-    stats.high = minimumValue + highIndex;
+    result.low = minimum + lowIndex;
+    result.high = minimum + highIndex;
 
-    return stats;
+    return result;
 }
 
-quint8 contrastValue(qint64 value,
-                     const ContrastBandStats &stats,
-                     bool hasNoData,
-                     qint64 noDataInteger)
+quint8 contrast(qint64 value,
+                const ContrastBandStats &stats,
+                bool hasNoData,
+                qint64 noData)
 {
-    if (isNoData(value, hasNoData, noDataInteger))
+    if (noDataMatches(value, hasNoData, noData))
         return 0;
 
     if (stats.high <= stats.low)
@@ -612,329 +1048,567 @@ quint8 contrastValue(qint64 value,
     if (value >= stats.high)
         return 255;
 
-    const double normalized =
+    const double t =
         static_cast<double>(value - stats.low) /
         static_cast<double>(stats.high - stats.low);
 
-    int result =
-        static_cast<int>(std::floor(normalized * 255.0 + 0.5));
+    int v = static_cast<int>(std::floor(t * 255.0 + 0.5));
 
-    if (result < 0)
-        result = 0;
-    if (result > 255)
-        result = 255;
+    if (v < 0)
+        v = 0;
+    if (v > 255)
+        v = 255;
 
-    return static_cast<quint8>(result);
+    return static_cast<quint8>(v);
 }
 
-bool configureOutput(TIFF *outTiff,
+bool buildHistograms(QFile &file,
                      const ImageInfo &info,
+                     bool hasNoData,
+                     qint64 noData,
+                     QVector<QVector<quint64> > &histograms,
+                     QVector<quint64> &valid,
+                     QTextStream &out,
                      QString &error)
 {
-    if (!TIFFSetField(outTiff, TIFFTAG_IMAGEWIDTH, info.width) ||
-        !TIFFSetField(outTiff, TIFFTAG_IMAGELENGTH, info.height) ||
-        !TIFFSetField(outTiff, TIFFTAG_BITSPERSAMPLE, 8) ||
-        !TIFFSetField(outTiff, TIFFTAG_SAMPLESPERPIXEL, info.samplesPerPixel) ||
-        !TIFFSetField(outTiff, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT) ||
-        !TIFFSetField(outTiff, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG) ||
-        !TIFFSetField(outTiff, TIFFTAG_PHOTOMETRIC, info.photometric) ||
-        !TIFFSetField(outTiff, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT) ||
-        !TIFFSetField(outTiff, TIFFTAG_COMPRESSION, COMPRESSION_NONE))
+    const quint32 stripsPerPlane =
+        (info.height + info.rowsPerStrip - 1) /
+        info.rowsPerStrip;
+
+    const int expectedStripCount =
+        info.planarConfig == PlanarContig
+            ? static_cast<int>(stripsPerPlane)
+            : static_cast<int>(
+                  stripsPerPlane * info.samplesPerPixel
+              );
+
+    if (info.stripOffsets.size() < expectedStripCount)
     {
-        error = "Failed to configure output TIFF";
+        error = QString("TIFF has %1 strips, expected at least %2")
+                    .arg(info.stripOffsets.size())
+                    .arg(expectedStripCount);
         return false;
     }
 
-    TIFFSetField(outTiff,
-                 TIFFTAG_SOFTWARE,
-                 "Foton task 5 - 2 percent histogram contrast");
-
-    if (info.tiled)
-    {
-        if (!TIFFSetField(outTiff, TIFFTAG_TILEWIDTH, info.tileWidth) ||
-            !TIFFSetField(outTiff, TIFFTAG_TILELENGTH, info.tileLength))
-        {
-            error = "Failed to configure output TIFF tiles";
-            return false;
-        }
-    }
-    else
-    {
-        if (!TIFFSetField(outTiff,
-                          TIFFTAG_ROWSPERSTRIP,
-                          info.rowsPerStrip))
-        {
-            error = "Failed to configure output TIFF strips";
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool writeContrastedTiled(TIFF *input,
-                          TIFF *output,
-                          const ImageInfo &info,
-                          const QVector<ContrastBandStats> &stats,
-                          bool hasNoData,
-                          qint64 noDataInteger,
-                          QTextStream &out,
-                          QString &error)
-{
-    QByteArray tile;
-    QVector<QByteArray> separateTiles(info.samplesPerPixel);
-
-    const int outputTileBytes =
-        static_cast<int>(
-            static_cast<quint64>(info.tileWidth) *
-            info.tileLength *
-            info.samplesPerPixel
-        );
-
-    QByteArray outputTile(outputTileBytes, 0);
-
-    const uint32_t tilesX =
-        (info.width + info.tileWidth - 1) / info.tileWidth;
-    const uint32_t tilesY =
-        (info.height + info.tileLength - 1) / info.tileLength;
-    const quint64 totalTiles =
-        static_cast<quint64>(tilesX) * static_cast<quint64>(tilesY);
-
-    quint64 done = 0;
     int lastProgress = -10;
 
-    for (uint32_t y = 0; y < info.height; y += info.tileLength)
+    for (quint32 s = 0; s < stripsPerPlane; ++s)
     {
-        const uint32_t actualHeight =
-            std::min(info.tileLength, info.height - y);
+        const quint32 y = s * info.rowsPerStrip;
+        const quint32 rows =
+            std::min(info.rowsPerStrip,
+                     info.height - y);
 
-        for (uint32_t x = 0; x < info.width; x += info.tileWidth)
+        if (info.planarConfig == PlanarContig)
         {
-            const uint32_t actualWidth =
-                std::min(info.tileWidth, info.width - x);
+            QByteArray decoded;
 
-            outputTile.fill(0);
-
-            if (info.planarConfig == PLANARCONFIG_CONTIG)
-            {
-                if (!readTile(input, tile, x, y, 0, error))
-                    return false;
-            }
-            else
-            {
-                for (uint16_t sample = 0;
-                     sample < info.samplesPerPixel;
-                     ++sample)
-                {
-                    if (!readTile(input,
-                                  separateTiles[sample],
-                                  x,
-                                  y,
-                                  sample,
+            if (!readDecodedStrip(file,
+                                  info,
+                                  static_cast<int>(s),
+                                  rows,
+                                  info.samplesPerPixel,
+                                  decoded,
                                   error))
-                    {
-                        return false;
-                    }
-                }
+            {
+                return false;
             }
 
-            for (uint32_t row = 0; row < actualHeight; ++row)
+            const quint64 pixels =
+                static_cast<quint64>(rows) * info.width;
+
+            for (quint64 p = 0; p < pixels; ++p)
             {
-                for (uint32_t col = 0; col < actualWidth; ++col)
+                for (quint16 band = 0;
+                     band < info.samplesPerPixel;
+                     ++band)
                 {
-                    const int pixelIndex =
-                        static_cast<int>(row * info.tileWidth + col);
-
-                    for (uint16_t sample = 0;
-                         sample < info.samplesPerPixel;
-                         ++sample)
-                    {
-                        qint64 value = 0;
-
-                        if (info.planarConfig == PLANARCONFIG_CONTIG)
-                        {
-                            value = decodeSample(
-                                tile.constData(),
-                                pixelIndex * info.samplesPerPixel + sample,
-                                info
-                            );
-                        }
-                        else
-                        {
-                            value = decodeSample(
-                                separateTiles[sample].constData(),
-                                pixelIndex,
-                                info
-                            );
-                        }
-
-                        outputTile[
-                            pixelIndex * info.samplesPerPixel + sample
-                        ] = static_cast<char>(
-                            contrastValue(value,
-                                          stats.at(sample),
-                                          hasNoData,
-                                          noDataInteger)
+                    const qint64 value =
+                        numericSample(
+                            decoded,
+                            static_cast<int>(
+                                p * info.samplesPerPixel +
+                                band
+                            ),
+                            info
                         );
+
+                    if (noDataMatches(value,
+                                      hasNoData,
+                                      noData))
+                    {
+                        continue;
                     }
+
+                    const int index =
+                        static_cast<int>(
+                            value - minimumSample(info)
+                        );
+
+                    ++histograms[band][index];
+                    ++valid[band];
                 }
             }
-
-            if (TIFFWriteTile(output,
-                              outputTile.data(),
-                              x,
-                              y,
-                              0,
-                              0) < 0)
-            {
-                error = QString("Failed to write output TIFF tile at (%1,%2)")
-                            .arg(x)
-                            .arg(y);
-                return false;
-            }
-
-            ++done;
-            const int percent =
-                static_cast<int>((done * 100u) / totalTiles);
-
-            reportProgress(out,
-                           "Writing 8-bit TIFF",
-                           percent,
-                           lastProgress);
-        }
-    }
-
-    return true;
-}
-
-bool writeContrastedStripped(TIFF *input,
-                             TIFF *output,
-                             const ImageInfo &info,
-                             const QVector<ContrastBandStats> &stats,
-                             bool hasNoData,
-                             qint64 noDataInteger,
-                             QTextStream &out,
-                             QString &error)
-{
-    QByteArray strip;
-    QVector<QByteArray> separateStrips(info.samplesPerPixel);
-
-    const uint32_t stripsY =
-        (info.height + info.rowsPerStrip - 1) / info.rowsPerStrip;
-
-    int lastProgress = -10;
-
-    for (uint32_t stripY = 0; stripY < stripsY; ++stripY)
-    {
-        const uint32_t y = stripY * info.rowsPerStrip;
-        const uint32_t actualRows =
-            std::min(info.rowsPerStrip, info.height - y);
-
-        if (info.planarConfig == PLANARCONFIG_CONTIG)
-        {
-            const tstrip_t stripIndex =
-                TIFFComputeStrip(input, y, 0);
-
-            if (!readStrip(input, strip, stripIndex, error))
-                return false;
         }
         else
         {
-            for (uint16_t sample = 0;
-                 sample < info.samplesPerPixel;
-                 ++sample)
+            for (quint16 band = 0;
+                 band < info.samplesPerPixel;
+                 ++band)
             {
-                const tstrip_t stripIndex =
-                    TIFFComputeStrip(input, y, sample);
+                QByteArray decoded;
 
-                if (!readStrip(input,
-                               separateStrips[sample],
-                               stripIndex,
-                               error))
+                const int stripIndex =
+                    static_cast<int>(
+                        band * stripsPerPlane + s
+                    );
+
+                if (!readDecodedStrip(file,
+                                      info,
+                                      stripIndex,
+                                      rows,
+                                      1,
+                                      decoded,
+                                      error))
                 {
                     return false;
                 }
+
+                const quint64 pixels =
+                    static_cast<quint64>(rows) *
+                    info.width;
+
+                for (quint64 p = 0; p < pixels; ++p)
+                {
+                    const qint64 value =
+                        numericSample(
+                            decoded,
+                            static_cast<int>(p),
+                            info
+                        );
+
+                    if (noDataMatches(value,
+                                      hasNoData,
+                                      noData))
+                    {
+                        continue;
+                    }
+
+                    const int index =
+                        static_cast<int>(
+                            value - minimumSample(info)
+                        );
+
+                    ++histograms[band][index];
+                    ++valid[band];
+                }
             }
         }
 
-        const quint64 pixelCount =
-            static_cast<quint64>(actualRows) * info.width;
+        progress(out,
+                 "Histogram",
+                 static_cast<int>(
+                     ((s + 1) * 100u) /
+                     stripsPerPlane
+                 ),
+                 lastProgress);
+    }
+
+    return true;
+}
+
+struct IfdEntryOut
+{
+    quint16 tag;
+    quint16 type;
+    quint32 count;
+    quint32 value;
+};
+
+void appendIfdEntry(QByteArray &data,
+                    const IfdEntryOut &entry)
+{
+    appendU16LE(data, entry.tag);
+    appendU16LE(data, entry.type);
+    appendU32LE(data, entry.count);
+
+    if (entry.type == TypeShort &&
+        entry.count == 1)
+    {
+        appendU16LE(data,
+                    static_cast<quint16>(entry.value));
+        appendU16LE(data, 0);
+    }
+    else
+    {
+        appendU32LE(data, entry.value);
+    }
+}
+
+bool finishOutputTiff(QFile &output,
+                      const ImageInfo &info,
+                      quint32 rowsPerStrip,
+                      const QVector<quint32> &stripOffsets,
+                      const QVector<quint32> &stripByteCounts,
+                      QString &error)
+{
+    if (stripOffsets.isEmpty() ||
+        stripOffsets.size() != stripByteCounts.size())
+    {
+        error = "Internal output TIFF strip table error";
+        return false;
+    }
+
+    const quint32 ifdOffset =
+        static_cast<quint32>(output.pos());
+
+    const int entryCount = 10;
+
+    quint32 extraOffset =
+        ifdOffset +
+        2u +
+        static_cast<quint32>(entryCount) * 12u +
+        4u;
+
+    quint32 bitsOffset = 8;
+    QByteArray extra;
+
+    if (info.samplesPerPixel == 3)
+    {
+        bitsOffset = extraOffset;
+
+        for (int i = 0; i < 3; ++i)
+            appendU16LE(extra, 8);
+
+        extraOffset += 6;
+    }
+
+    quint32 stripOffsetsValue = stripOffsets.first();
+
+    if (stripOffsets.size() > 1)
+    {
+        stripOffsetsValue = extraOffset;
+
+        for (int i = 0; i < stripOffsets.size(); ++i)
+            appendU32LE(extra, stripOffsets.at(i));
+
+        extraOffset +=
+            static_cast<quint32>(
+                stripOffsets.size() * 4
+            );
+    }
+
+    quint32 stripCountsValue =
+        stripByteCounts.first();
+
+    if (stripByteCounts.size() > 1)
+    {
+        stripCountsValue = extraOffset;
+
+        for (int i = 0; i < stripByteCounts.size(); ++i)
+            appendU32LE(extra, stripByteCounts.at(i));
+
+        extraOffset +=
+            static_cast<quint32>(
+                stripByteCounts.size() * 4
+            );
+    }
+
+    QVector<IfdEntryOut> entries;
+
+    IfdEntryOut e;
+
+    e.tag = TagImageWidth;
+    e.type = TypeLong;
+    e.count = 1;
+    e.value = info.width;
+    entries.push_back(e);
+
+    e.tag = TagImageLength;
+    e.type = TypeLong;
+    e.count = 1;
+    e.value = info.height;
+    entries.push_back(e);
+
+    e.tag = TagBitsPerSample;
+    e.type = TypeShort;
+    e.count = info.samplesPerPixel;
+    e.value = bitsOffset;
+    entries.push_back(e);
+
+    e.tag = TagCompression;
+    e.type = TypeShort;
+    e.count = 1;
+    e.value = CompressionNone;
+    entries.push_back(e);
+
+    e.tag = TagPhotometric;
+    e.type = TypeShort;
+    e.count = 1;
+    e.value =
+        info.samplesPerPixel == 1
+            ? PhotometricMinIsBlack
+            : PhotometricRgb;
+    entries.push_back(e);
+
+    e.tag = TagStripOffsets;
+    e.type = TypeLong;
+    e.count = stripOffsets.size();
+    e.value = stripOffsetsValue;
+    entries.push_back(e);
+
+    e.tag = TagSamplesPerPixel;
+    e.type = TypeShort;
+    e.count = 1;
+    e.value = info.samplesPerPixel;
+    entries.push_back(e);
+
+    e.tag = TagRowsPerStrip;
+    e.type = TypeLong;
+    e.count = 1;
+    e.value = rowsPerStrip;
+    entries.push_back(e);
+
+    e.tag = TagStripByteCounts;
+    e.type = TypeLong;
+    e.count = stripByteCounts.size();
+    e.value = stripCountsValue;
+    entries.push_back(e);
+
+    e.tag = TagPlanarConfig;
+    e.type = TypeShort;
+    e.count = 1;
+    e.value = PlanarContig;
+    entries.push_back(e);
+
+    std::sort(entries.begin(),
+              entries.end(),
+              [](const IfdEntryOut &a,
+                 const IfdEntryOut &b)
+              {
+                  return a.tag < b.tag;
+              });
+
+    QByteArray ifd;
+    appendU16LE(ifd,
+                static_cast<quint16>(entries.size()));
+
+    for (int i = 0; i < entries.size(); ++i)
+        appendIfdEntry(ifd, entries.at(i));
+
+    appendU32LE(ifd, 0);
+    ifd.append(extra);
+
+    if (output.write(ifd) != ifd.size())
+    {
+        error = "Failed to write TIFF IFD";
+        return false;
+    }
+
+    if (!output.seek(4))
+    {
+        error = "Failed to patch TIFF header";
+        return false;
+    }
+
+    QByteArray offsetBytes;
+    appendU32LE(offsetBytes, ifdOffset);
+
+    if (output.write(offsetBytes) != 4)
+    {
+        error = "Failed to write TIFF IFD offset";
+        return false;
+    }
+
+    return true;
+}
+
+bool writeContrasted(QFile &input,
+                     const ImageInfo &info,
+                     const QVector<ContrastBandStats> &stats,
+                     bool hasNoData,
+                     qint64 noData,
+                     const QString &outputPath,
+                     QTextStream &out,
+                     QString &error)
+{
+    QFile output(outputPath);
+
+    if (!output.open(QIODevice::WriteOnly |
+                     QIODevice::Truncate))
+    {
+        error = QString("Cannot create output TIFF: %1")
+                    .arg(output.errorString());
+        return false;
+    }
+
+    QByteArray header;
+    header.append('I');
+    header.append('I');
+    appendU16LE(header, 42);
+    appendU32LE(header, 0);
+
+    if (output.write(header) != header.size())
+    {
+        error = "Cannot write output TIFF header";
+        return false;
+    }
+
+    const quint32 stripsPerPlane =
+        (info.height + info.rowsPerStrip - 1) /
+        info.rowsPerStrip;
+
+    QVector<quint32> outputOffsets;
+    QVector<quint32> outputCounts;
+
+    int lastProgress = -10;
+
+    for (quint32 s = 0; s < stripsPerPlane; ++s)
+    {
+        const quint32 y = s * info.rowsPerStrip;
+        const quint32 rows =
+            std::min(info.rowsPerStrip,
+                     info.height - y);
+
+        const quint64 pixels =
+            static_cast<quint64>(rows) *
+            info.width;
 
         QByteArray outputStrip(
-            static_cast<int>(pixelCount * info.samplesPerPixel),
+            static_cast<int>(
+                pixels * info.samplesPerPixel
+            ),
             0
         );
 
-        for (quint64 pixel = 0; pixel < pixelCount; ++pixel)
+        if (info.planarConfig == PlanarContig)
         {
-            for (uint16_t sample = 0;
-                 sample < info.samplesPerPixel;
-                 ++sample)
+            QByteArray decoded;
+
+            if (!readDecodedStrip(input,
+                                  info,
+                                  static_cast<int>(s),
+                                  rows,
+                                  info.samplesPerPixel,
+                                  decoded,
+                                  error))
             {
-                qint64 value = 0;
+                return false;
+            }
 
-                if (info.planarConfig == PLANARCONFIG_CONTIG)
+            for (quint64 p = 0; p < pixels; ++p)
+            {
+                for (quint16 band = 0;
+                     band < info.samplesPerPixel;
+                     ++band)
                 {
-                    value = decodeSample(
-                        strip.constData(),
+                    const qint64 value =
+                        numericSample(
+                            decoded,
+                            static_cast<int>(
+                                p * info.samplesPerPixel +
+                                band
+                            ),
+                            info
+                        );
+
+                    outputStrip[
                         static_cast<int>(
-                            pixel * info.samplesPerPixel + sample
-                        ),
-                        info
+                            p * info.samplesPerPixel +
+                            band
+                        )
+                    ] = static_cast<char>(
+                        contrast(value,
+                                 stats.at(band),
+                                 hasNoData,
+                                 noData)
                     );
                 }
-                else
-                {
-                    value = decodeSample(
-                        separateStrips[sample].constData(),
-                        static_cast<int>(pixel),
-                        info
+            }
+        }
+        else
+        {
+            for (quint16 band = 0;
+                 band < info.samplesPerPixel;
+                 ++band)
+            {
+                QByteArray decoded;
+
+                const int stripIndex =
+                    static_cast<int>(
+                        band * stripsPerPlane + s
                     );
+
+                if (!readDecodedStrip(input,
+                                      info,
+                                      stripIndex,
+                                      rows,
+                                      1,
+                                      decoded,
+                                      error))
+                {
+                    return false;
                 }
 
-                outputStrip[
-                    static_cast<int>(
-                        pixel * info.samplesPerPixel + sample
-                    )
-                ] = static_cast<char>(
-                    contrastValue(value,
-                                  stats.at(sample),
-                                  hasNoData,
-                                  noDataInteger)
-                );
+                for (quint64 p = 0; p < pixels; ++p)
+                {
+                    const qint64 value =
+                        numericSample(
+                            decoded,
+                            static_cast<int>(p),
+                            info
+                        );
+
+                    outputStrip[
+                        static_cast<int>(
+                            p * info.samplesPerPixel +
+                            band
+                        )
+                    ] = static_cast<char>(
+                        contrast(value,
+                                 stats.at(band),
+                                 hasNoData,
+                                 noData)
+                    );
+                }
             }
         }
 
-        const tstrip_t outputStripIndex =
-            TIFFComputeStrip(output, y, 0);
+        outputOffsets.push_back(
+            static_cast<quint32>(output.pos())
+        );
 
-        const tsize_t written =
-            TIFFWriteEncodedStrip(
-                output,
-                outputStripIndex,
-                outputStrip.data(),
-                static_cast<tsize_t>(outputStrip.size())
-            );
-
-        if (written < 0)
+        if (output.write(outputStrip) !=
+            outputStrip.size())
         {
-            error = QString("Failed to write output TIFF strip %1")
-                        .arg(static_cast<qulonglong>(outputStripIndex));
+            error = "Failed to write output TIFF raster data";
             return false;
         }
 
-        const int percent =
-            static_cast<int>(
-                (static_cast<quint64>(stripY + 1) * 100u) /
-                stripsY
-            );
+        outputCounts.push_back(
+            static_cast<quint32>(outputStrip.size())
+        );
 
-        reportProgress(out,
-                       "Writing 8-bit TIFF",
-                       percent,
-                       lastProgress);
+        progress(out,
+                 "Writing 8-bit TIFF",
+                 static_cast<int>(
+                     ((s + 1) * 100u) /
+                     stripsPerPlane
+                 ),
+                 lastProgress);
     }
 
+    if (!finishOutputTiff(output,
+                          info,
+                          info.rowsPerStrip,
+                          outputOffsets,
+                          outputCounts,
+                          error))
+    {
+        return false;
+    }
+
+    output.close();
     return true;
 }
 }
@@ -970,48 +1644,26 @@ bool RasterContrast::process(const QString &inputPath,
     if (QFileInfo(inputPath).absoluteFilePath() ==
         QFileInfo(outputPath).absoluteFilePath())
     {
-        error = "Output TIFF path must be different from the input TIFF path.";
+        error =
+            "Output TIFF path must be different from input TIFF path.";
         return false;
     }
 
     double noDataValue = 0.0;
-    bool noDataNumeric = false;
-
-    if (hasNoData)
-    {
-        noDataValue = noDataText.toDouble(&noDataNumeric);
-
-        if (!noDataNumeric)
-        {
-            error = QString("GDAL_NODATA is not a numeric integer value: %1")
-                        .arg(noDataText);
-            return false;
-        }
-    }
-
-    TIFF *input = openTiff(inputPath, "r");
-
-    if (!input)
-    {
-        error = "libtiff cannot open input TIFF";
-        return false;
-    }
-
-    ImageInfo info;
-
-    if (!readInfo(input, info, error))
-    {
-        TIFFClose(input);
-        return false;
-    }
-
-    const qint64 minimum = minSampleValue(info);
-    const qint64 maximum = maxSampleValue(info);
-
     qint64 noDataInteger = 0;
 
     if (hasNoData)
     {
+        bool ok = false;
+        noDataValue = noDataText.toDouble(&ok);
+
+        if (!ok)
+        {
+            error = QString("GDAL_NODATA is not numeric: %1")
+                        .arg(noDataText);
+            return false;
+        }
+
         noDataInteger =
             static_cast<qint64>(
                 noDataValue >= 0.0
@@ -1019,16 +1671,45 @@ bool RasterContrast::process(const QString &inputPath,
                     : std::ceil(noDataValue - 0.5)
             );
 
-        if (std::fabs(noDataValue - static_cast<double>(noDataInteger)) > 1e-9 ||
-            noDataInteger < minimum ||
-            noDataInteger > maximum)
+        if (std::fabs(
+                noDataValue -
+                static_cast<double>(noDataInteger)
+            ) > 1e-9)
         {
             error =
-                QString("GDAL_NODATA=%1 cannot be represented by this integer raster.")
-                    .arg(noDataText);
-            TIFFClose(input);
+                "This task implementation expects integer GDAL_NODATA.";
             return false;
         }
+    }
+
+    QFile input(inputPath);
+
+    if (!input.open(QIODevice::ReadOnly))
+    {
+        error = QString("Cannot open TIFF raster: %1")
+                    .arg(input.errorString());
+        return false;
+    }
+
+    ImageInfo info;
+
+    if (!parseTiff(input, info, error))
+        return false;
+
+    const qint64 minimum = minimumSample(info);
+    const qint64 maximum =
+        minimum + histogramSize(info) - 1;
+
+    if (hasNoData &&
+        (noDataInteger < minimum ||
+         noDataInteger > maximum))
+    {
+        error = QString(
+            "GDAL_NODATA=%1 is outside raster sample range [%2,%3]")
+            .arg(noDataText)
+            .arg(minimum)
+            .arg(maximum);
+        return false;
     }
 
     result.width = static_cast<int>(info.width);
@@ -1038,19 +1719,11 @@ bool RasterContrast::process(const QString &inputPath,
     result.hasNoData = hasNoData;
     result.noDataValue = noDataValue;
 
-    const int bins = histogramSize(info);
-
-    QVector<QVector<quint64> > histograms(info.samplesPerPixel);
-    QVector<quint64> validCounts(info.samplesPerPixel, 0);
-
-    for (int sample = 0; sample < info.samplesPerPixel; ++sample)
-        histograms[sample] = QVector<quint64>(bins, 0);
-
     out << "Raster: "
         << info.width << " x " << info.height
         << ", " << info.bitsPerSample << " bit"
         << ", samples=" << info.samplesPerPixel
-        << (info.tiled ? ", tiled" : ", stripped")
+        << ", compression=" << info.compression
         << "\n";
 
     if (hasNoData)
@@ -1060,57 +1733,61 @@ bool RasterContrast::process(const QString &inputPath,
 
     out.flush();
 
-    bool histogramOk = false;
+    QVector<QVector<quint64> > histograms(
+        info.samplesPerPixel
+    );
 
-    if (info.tiled)
+    QVector<quint64> valid(
+        info.samplesPerPixel,
+        0
+    );
+
+    const int bins = histogramSize(info);
+
+    for (int band = 0;
+         band < info.samplesPerPixel;
+         ++band)
     {
-        histogramOk =
-            buildHistogramsTiled(input,
-                                 info,
-                                 hasNoData,
-                                 noDataInteger,
-                                 histograms,
-                                 validCounts,
-                                 out,
-                                 error);
-    }
-    else
-    {
-        histogramOk =
-            buildHistogramsStripped(input,
-                                    info,
-                                    hasNoData,
-                                    noDataInteger,
-                                    histograms,
-                                    validCounts,
-                                    out,
-                                    error);
+        histograms[band] =
+            QVector<quint64>(bins, 0);
     }
 
-    TIFFClose(input);
-
-    if (!histogramOk)
+    if (!buildHistograms(input,
+                         info,
+                         hasNoData,
+                         noDataInteger,
+                         histograms,
+                         valid,
+                         out,
+                         error))
+    {
         return false;
+    }
 
     result.bands.clear();
 
-    for (int sample = 0; sample < info.samplesPerPixel; ++sample)
+    for (int band = 0;
+         band < info.samplesPerPixel;
+         ++band)
     {
-        if (validCounts.at(sample) == 0)
+        if (valid.at(band) == 0)
         {
-            error = QString("Band %1 contains no valid pixels after excluding GDAL_NODATA.")
-                        .arg(sample + 1);
+            error = QString(
+                "Band %1 has no valid pixels after excluding GDAL_NODATA")
+                .arg(band + 1);
             return false;
         }
 
         const ContrastBandStats stats =
-            calculateLimits(histograms.at(sample),
-                            validCounts.at(sample),
-                            minimum);
+            limitsFromHistogram(
+                histograms.at(band),
+                valid.at(band),
+                minimum
+            );
 
         result.bands.push_back(stats);
 
-        out << "Band " << (sample + 1)
+        out << "Band " << (band + 1)
             << ": valid=" << stats.validSamples
             << ", 2% low=" << stats.low
             << ", 2% high=" << stats.high
@@ -1119,64 +1796,20 @@ bool RasterContrast::process(const QString &inputPath,
 
     out.flush();
 
-    input = openTiff(inputPath, "r");
-
-    if (!input)
+    if (!writeContrasted(input,
+                         info,
+                         result.bands,
+                         hasNoData,
+                         noDataInteger,
+                         outputPath,
+                         out,
+                         error))
     {
-        error = "libtiff cannot reopen input TIFF for conversion";
         return false;
     }
 
-    TIFF *output = openTiff(outputPath, "w");
-
-    if (!output)
-    {
-        TIFFClose(input);
-        error = "libtiff cannot create output TIFF";
-        return false;
-    }
-
-    if (!configureOutput(output, info, error))
-    {
-        TIFFClose(output);
-        TIFFClose(input);
-        return false;
-    }
-
-    bool writeOk = false;
-
-    if (info.tiled)
-    {
-        writeOk =
-            writeContrastedTiled(input,
-                                 output,
-                                 info,
-                                 result.bands,
-                                 hasNoData,
-                                 noDataInteger,
-                                 out,
-                                 error);
-    }
-    else
-    {
-        writeOk =
-            writeContrastedStripped(input,
-                                    output,
-                                    info,
-                                    result.bands,
-                                    hasNoData,
-                                    noDataInteger,
-                                    out,
-                                    error);
-    }
-
-    TIFFClose(output);
-    TIFFClose(input);
-
-    if (!writeOk)
-        return false;
-
-    out << "Saved 8-bit TIFF: " << outputPath << "\n";
+    out << "Saved 8-bit TIFF: "
+        << outputPath << "\n";
     out.flush();
 
     return true;
