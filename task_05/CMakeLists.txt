@@ -6,8 +6,6 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt5 COMPONENTS Core REQUIRED)
-find_package(TIFF REQUIRED)
-
 
 set(SOURCES
     main.cpp
@@ -33,5 +31,4 @@ add_executable(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME}
     Qt5::Core
-    TIFF::TIFF
 )
