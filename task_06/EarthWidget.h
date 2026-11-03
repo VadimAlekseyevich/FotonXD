@@ -34,6 +34,7 @@ public:
 
     void clearRouteOverlay();
     int routeTextureLimit() const;
+    void centerOnCoordinates(double latitude, double longitude);
 
 signals:
     void fpsChanged(int fps);
