@@ -1,5 +1,6 @@
 #include "EarthWidget.h"
 #include "GeoPicking.h"
+#include "GeoReference.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -15,6 +16,7 @@
 #include <QtMath>
 
 #include <cmath>
+#include <algorithm>
 
 namespace
 {
@@ -25,7 +27,10 @@ EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
     : QOpenGLWidget(parent),
       m_mapDirectory(mapDirectory),
       m_textureId(0),
+      m_routeTextureId(0),
       m_indexCount(0),
+      m_routeIndexCount(0),
+      m_maxTextureSize(2048),
       m_hasTexture(false),
       m_rotationX(15.0f),
       m_rotationY(0.0f),
@@ -62,6 +67,18 @@ EarthWidget::~EarthWidget()
             m_textureId = 0;
         }
 
+        if (m_routeTextureId != 0)
+        {
+            glDeleteTextures(1, &m_routeTextureId);
+            m_routeTextureId = 0;
+        }
+
+        if (m_routeIndexBuffer)
+            m_routeIndexBuffer->destroy();
+
+        if (m_routeVertexBuffer)
+            m_routeVertexBuffer->destroy();
+
         if (m_indexBuffer)
             m_indexBuffer->destroy();
 
@@ -71,6 +88,8 @@ EarthWidget::~EarthWidget()
         m_program.reset();
         m_indexBuffer.reset();
         m_vertexBuffer.reset();
+        m_routeIndexBuffer.reset();
+        m_routeVertexBuffer.reset();
 
         doneCurrent();
     }
@@ -180,6 +199,57 @@ void EarthWidget::paintGL()
         glBindTexture(GL_TEXTURE_2D, 0);
 
     m_program->release();
+
+    // Draw the georeferenced raster as a thin triangulated surface
+    // above the globe, with alpha=0 for GDAL_NODATA pixels.
+    if (m_routeTextureId != 0 &&
+        m_routeVertexBuffer &&
+        m_routeIndexBuffer &&
+        m_routeIndexCount > 0)
+    {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+
+        m_program->bind();
+        m_program->setUniformValue("u_mvp", mvp);
+        m_program->setUniformValue("u_texture", 0);
+        m_program->setUniformValue("u_hasTexture", 1);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_routeTextureId);
+
+        m_routeVertexBuffer->bind();
+        m_routeIndexBuffer->bind();
+
+        m_program->enableAttributeArray(positionAttribute);
+        m_program->setAttributeBuffer(
+            positionAttribute, GL_FLOAT, 0, 3,
+            static_cast<int>(sizeof(Vertex))
+        );
+
+        m_program->enableAttributeArray(texCoordAttribute);
+        m_program->setAttributeBuffer(
+            texCoordAttribute, GL_FLOAT,
+            3 * static_cast<int>(sizeof(float)), 2,
+            static_cast<int>(sizeof(Vertex))
+        );
+
+        glDrawElements(GL_TRIANGLES, m_routeIndexCount,
+                       GL_UNSIGNED_INT, 0);
+
+        m_program->disableAttributeArray(positionAttribute);
+        m_program->disableAttributeArray(texCoordAttribute);
+
+        m_routeIndexBuffer->release();
+        m_routeVertexBuffer->release();
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        m_program->release();
+
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
 
     ++m_frameCount;
     const qint64 elapsedMs = m_fpsTimer.elapsed();
@@ -420,6 +490,7 @@ void EarthWidget::initializeTexture()
 {
     GLint maxTextureSize = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize);
+    m_maxTextureSize = maxTextureSize;
 
     int width = 0;
     int height = 0;
@@ -534,6 +605,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
         {
             addDirectory(root.absolutePath());
             addDirectory(root.filePath(QStringLiteral("maps")));
+            addDirectory(root.filePath(QStringLiteral("task_06/maps")));
             addDirectory(root.filePath(QStringLiteral("task_03/maps")));
             addDirectory(root.filePath(QStringLiteral("task_02/maps")));
 
@@ -632,4 +704,228 @@ bool EarthWidget::loadTexture(const QString &filePath,
     glBindTexture(GL_TEXTURE_2D, 0);
 
     return glGetError() == GL_NO_ERROR;
+}
+
+
+int EarthWidget::routeTextureLimit() const
+{
+    return std::max(256, std::min(2048, m_maxTextureSize));
+}
+
+void EarthWidget::clearRouteOverlay()
+{
+    if (context())
+    {
+        makeCurrent();
+
+        if (m_routeTextureId != 0)
+        {
+            glDeleteTextures(1, &m_routeTextureId);
+            m_routeTextureId = 0;
+        }
+
+        if (m_routeIndexBuffer)
+            m_routeIndexBuffer->destroy();
+
+        if (m_routeVertexBuffer)
+            m_routeVertexBuffer->destroy();
+
+        doneCurrent();
+    }
+
+    m_routeTextureId = 0;
+    m_routeIndexCount = 0;
+    m_routeIndexBuffer.reset();
+    m_routeVertexBuffer.reset();
+    update();
+}
+
+bool EarthWidget::loadRouteOverlay(const QImage &image,
+                                   const GeoReference &geoReference,
+                                   int originalWidth,
+                                   int originalHeight,
+                                   QString &error)
+{
+    error.clear();
+
+    if (image.isNull() ||
+        image.format() != QImage::Format_RGBA8888 ||
+        originalWidth <= 0 || originalHeight <= 0)
+    {
+        error = "Invalid RGBA route preview or raster dimensions";
+        return false;
+    }
+
+    if (!context() || !m_program || !m_program->isLinked())
+    {
+        error = "OpenGL widget is not initialized";
+        return false;
+    }
+
+    const int segmentCount = 96;
+    const double aspect =
+        static_cast<double>(originalWidth) / originalHeight;
+
+    const int columns = (aspect >= 1.0)
+        ? segmentCount
+        : std::max(12, static_cast<int>(segmentCount * aspect));
+
+    const int rows = (aspect >= 1.0)
+        ? std::max(12, static_cast<int>(segmentCount / aspect))
+        : segmentCount;
+
+    QVector<Vertex> vertices;
+    QVector<quint32> indices;
+
+    vertices.reserve((columns + 1) * (rows + 1));
+    indices.reserve(columns * rows * 6);
+
+    const double pi = 3.14159265358979323846;
+
+    for (int y = 0; y <= rows; ++y)
+    {
+        const double v =
+            static_cast<double>(y) / rows;
+
+        for (int x = 0; x <= columns; ++x)
+        {
+            const double u =
+                static_cast<double>(x) / columns;
+
+            double latitude = 0.0;
+            double longitude = 0.0;
+
+            if (!geoReference.planar2geo(
+                    u * originalWidth,
+                    v * originalHeight,
+                    latitude,
+                    longitude) ||
+                !std::isfinite(latitude) ||
+                !std::isfinite(longitude))
+            {
+                error = "Failed to project route mesh onto Earth";
+                return false;
+            }
+
+            const double latRad = latitude * pi / 180.0;
+            const double lonRad = longitude * pi / 180.0;
+
+            const double cosLat = std::cos(latRad);
+            const double radius = 1.003;
+
+            Vertex vertex;
+            vertex.x = static_cast<float>(
+                radius * cosLat * std::sin(lonRad));
+            vertex.y = static_cast<float>(
+                radius * std::sin(latRad));
+            vertex.z = static_cast<float>(
+                radius * cosLat * std::cos(lonRad));
+            vertex.u = static_cast<float>(u);
+            vertex.v = static_cast<float>(v);
+
+            vertices.push_back(vertex);
+        }
+    }
+
+    const int rowSize = columns + 1;
+
+    for (int y = 0; y < rows; ++y)
+    {
+        for (int x = 0; x < columns; ++x)
+        {
+            const quint32 topLeft =
+                static_cast<quint32>(y * rowSize + x);
+            const quint32 bottomLeft =
+                static_cast<quint32>((y + 1) * rowSize + x);
+
+            indices.push_back(topLeft);
+            indices.push_back(bottomLeft);
+            indices.push_back(topLeft + 1);
+
+            indices.push_back(topLeft + 1);
+            indices.push_back(bottomLeft);
+            indices.push_back(bottomLeft + 1);
+        }
+    }
+
+    clearRouteOverlay();
+    makeCurrent();
+
+    GLuint textureId = 0;
+    glGenTextures(1, &textureId);
+    glBindTexture(GL_TEXTURE_2D, textureId);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                 image.width(), image.height(), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, image.constBits());
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (glGetError() != GL_NO_ERROR)
+    {
+        glDeleteTextures(1, &textureId);
+        doneCurrent();
+        error = "Failed to create OpenGL route texture";
+        return false;
+    }
+
+    std::unique_ptr<QOpenGLBuffer> vertexBuffer(
+        new QOpenGLBuffer(QOpenGLBuffer::VertexBuffer)
+    );
+
+    std::unique_ptr<QOpenGLBuffer> indexBuffer(
+        new QOpenGLBuffer(QOpenGLBuffer::IndexBuffer)
+    );
+
+    if (!vertexBuffer->create() || !indexBuffer->create())
+    {
+        if (vertexBuffer->isCreated())
+            vertexBuffer->destroy();
+        if (indexBuffer->isCreated())
+            indexBuffer->destroy();
+
+        glDeleteTextures(1, &textureId);
+        doneCurrent();
+        error = "Failed to create OpenGL route buffers";
+        return false;
+    }
+
+    vertexBuffer->bind();
+    vertexBuffer->setUsagePattern(QOpenGLBuffer::StaticDraw);
+    vertexBuffer->allocate(vertices.constData(),
+                           static_cast<int>(
+                               vertices.size() * sizeof(Vertex)));
+    vertexBuffer->release();
+
+    indexBuffer->bind();
+    indexBuffer->setUsagePattern(QOpenGLBuffer::StaticDraw);
+    indexBuffer->allocate(indices.constData(),
+                          static_cast<int>(
+                              indices.size() * sizeof(quint32)));
+    indexBuffer->release();
+
+    if (glGetError() != GL_NO_ERROR)
+    {
+        vertexBuffer->destroy();
+        indexBuffer->destroy();
+        glDeleteTextures(1, &textureId);
+        doneCurrent();
+        error = "Failed to upload route mesh";
+        return false;
+    }
+
+    m_routeTextureId = textureId;
+    m_routeIndexCount = indices.size();
+    m_routeVertexBuffer = std::move(vertexBuffer);
+    m_routeIndexBuffer = std::move(indexBuffer);
+
+    doneCurrent();
+    update();
+    return true;
 }
