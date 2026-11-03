@@ -6,6 +6,7 @@
 #include <QtGlobal>
 
 class QTextStream;
+class QImage;
 
 struct ContrastBandStats
 {
@@ -40,7 +41,9 @@ public:
                         const QString &noDataText,
                         ContrastResult &result,
                         QTextStream &out,
-                        QString &error);
+                        QString &error,
+                        QImage *routePreview = 0,
+                        int maxPreviewDimension = 2048);
 };
 
 #endif // RASTERCONTRAST_H
