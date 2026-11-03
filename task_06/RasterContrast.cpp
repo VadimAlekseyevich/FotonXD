@@ -39,6 +39,8 @@ const quint16 TypeLong = 4;
 const quint16 CompressionNone = 1;
 const quint16 CompressionLzw = 5;
 const quint16 CompressionPackBits = 32773;
+const quint16 CompressionDeflate = 8;
+const quint16 CompressionAdobeDeflate = 32946;
 
 const quint16 PhotometricMinIsWhite = 0;
 const quint16 PhotometricMinIsBlack = 1;
@@ -73,7 +75,10 @@ struct ImageInfo
           planarConfig(PlanarContig),
           predictor(1),
           orientation(1),
-          rowsPerStrip(0)
+          rowsPerStrip(0),
+          tiled(false),
+          tileWidth(0),
+          tileLength(0)
     {
     }
 
@@ -89,6 +94,9 @@ struct ImageInfo
     quint16 predictor;
     quint16 orientation;
     quint32 rowsPerStrip;
+    bool tiled;
+    quint32 tileWidth;
+    quint32 tileLength;
     QVector<quint32> stripOffsets;
     QVector<quint32> stripByteCounts;
 };
@@ -458,19 +466,33 @@ bool parseTiff(QFile &file,
     }
     info.sampleFormat = static_cast<quint16>(value);
 
-    if (findEntry(entries, TagTileWidth) ||
-        findEntry(entries, TagTileLength) ||
-        findEntry(entries, TagTileOffsets) ||
-        findEntry(entries, TagTileByteCounts))
+    info.tiled =
+        findEntry(entries, TagTileOffsets) != 0;
+
+    if (info.tiled)
     {
-        error = "Tiled TIFF is not supported by the built-in task reader yet";
-        return false;
+        if (!firstUnsigned(file, entries, TagTileWidth,
+                           info.littleEndian, 0, info.tileWidth) ||
+            !firstUnsigned(file, entries, TagTileLength,
+                           info.littleEndian, 0, info.tileLength) ||
+            info.tileWidth == 0 ||
+            info.tileLength == 0)
+        {
+            error = "Invalid tiled TIFF dimensions";
+            return false;
+        }
+
+        // The rest of the contrast algorithm works on logical
+        // strips. A tiled image is decoded into these row bands.
+        info.rowsPerStrip = info.tileLength;
     }
 
     const TiffEntry *offsetEntry =
-        findEntry(entries, TagStripOffsets);
+        findEntry(entries,
+                  info.tiled ? TagTileOffsets : TagStripOffsets);
     const TiffEntry *countEntry =
-        findEntry(entries, TagStripByteCounts);
+        findEntry(entries,
+                  info.tiled ? TagTileByteCounts : TagStripByteCounts);
 
     if (!offsetEntry || !countEntry ||
         !unsignedValues(file, *offsetEntry,
@@ -517,9 +539,11 @@ bool parseTiff(QFile &file,
 
     if (info.compression != CompressionNone &&
         info.compression != CompressionLzw &&
-        info.compression != CompressionPackBits)
+        info.compression != CompressionPackBits &&
+        info.compression != CompressionDeflate &&
+        info.compression != CompressionAdobeDeflate)
     {
-        error = QString("Unsupported TIFF compression=%1. Supported: none, LZW, PackBits.")
+        error = QString("Unsupported TIFF compression=%1. Supported: none, LZW, PackBits, Deflate.")
                     .arg(info.compression);
         return false;
     }
@@ -766,6 +790,33 @@ bool decodeSegment(const QByteArray &encoded,
 
     if (compression == CompressionLzw)
         return decodeLzw(encoded, expectedSize, decoded, error);
+
+    if (compression == CompressionDeflate ||
+        compression == CompressionAdobeDeflate)
+    {
+        QByteArray input;
+        input.reserve(encoded.size() + 4);
+
+        const quint32 size =
+            static_cast<quint32>(expectedSize);
+
+        input.append(static_cast<char>((size >> 24) & 255));
+        input.append(static_cast<char>((size >> 16) & 255));
+        input.append(static_cast<char>((size >> 8) & 255));
+        input.append(static_cast<char>(size & 255));
+        input.append(encoded);
+
+        decoded = qUncompress(input);
+
+        if (decoded.size() != expectedSize)
+        {
+            error = QString("Deflate decompression failed: decoded %1 of %2 bytes")
+                        .arg(decoded.size()).arg(expectedSize);
+            return false;
+        }
+
+        return true;
+    }
 
     error = QString("Unsupported TIFF compression=%1")
                 .arg(compression);
