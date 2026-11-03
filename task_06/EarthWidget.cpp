@@ -929,3 +929,15 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
     update();
     return true;
 }
+
+void EarthWidget::centerOnCoordinates(double latitude, double longitude)
+{
+    m_rotationX = static_cast<float>(latitude);
+    m_rotationY = static_cast<float>(-longitude);
+    m_cameraDistance = 2.2f;
+
+    if (m_hasCursorPosition)
+        updateCursorCoordinates(m_lastCursorPosition);
+
+    update();
+}
