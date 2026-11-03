@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QTextStream>
 #include <QVector>
 
@@ -1611,6 +1612,169 @@ bool writeContrasted(QFile &input,
     output.close();
     return true;
 }
+
+bool createRoutePreview(QFile &input,
+                        const ImageInfo &info,
+                        const QVector<ContrastBandStats> &stats,
+                        bool hasNoData,
+                        qint64 noData,
+                        int maxDimension,
+                        QImage &preview,
+                        QTextStream &out,
+                        QString &error)
+{
+    if (maxDimension < 1)
+        maxDimension = 2048;
+
+    const double factor = std::min(
+        1.0,
+        static_cast<double>(maxDimension) /
+        std::max(static_cast<double>(info.width),
+                 static_cast<double>(info.height))
+    );
+
+    const int previewWidth = std::max(
+        1, static_cast<int>(std::floor(info.width * factor + 0.5))
+    );
+    const int previewHeight = std::max(
+        1, static_cast<int>(std::floor(info.height * factor + 0.5))
+    );
+
+    preview = QImage(previewWidth, previewHeight,
+                     QImage::Format_RGBA8888);
+
+    if (preview.isNull())
+    {
+        error = "Cannot allocate 8-bit RGBA route preview";
+        return false;
+    }
+
+    const quint32 stripsPerPlane =
+        (info.height + info.rowsPerStrip - 1) /
+        info.rowsPerStrip;
+
+    int cachedStrip = -1;
+    QByteArray contig;
+    QVector<QByteArray> planes(info.samplesPerPixel);
+
+    for (int py = 0; py < previewHeight; ++py)
+    {
+        const quint32 sourceY = static_cast<quint32>(
+            std::min<quint64>(
+                info.height - 1,
+                (static_cast<quint64>(2 * py + 1) * info.height) /
+                    (2u * static_cast<quint64>(previewHeight))
+            )
+        );
+
+        const quint32 strip = sourceY / info.rowsPerStrip;
+
+        if (static_cast<int>(strip) != cachedStrip)
+        {
+            const quint32 stripY = strip * info.rowsPerStrip;
+            const quint32 rows = std::min(
+                info.rowsPerStrip, info.height - stripY
+            );
+
+            if (info.planarConfig == PlanarContig)
+            {
+                if (!readDecodedStrip(input, info,
+                                      static_cast<int>(strip), rows,
+                                      info.samplesPerPixel, contig, error))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                for (quint16 band = 0;
+                     band < info.samplesPerPixel; ++band)
+                {
+                    const int stripIndex = static_cast<int>(
+                        band * stripsPerPlane + strip
+                    );
+
+                    if (!readDecodedStrip(input, info, stripIndex,
+                                          rows, 1, planes[band], error))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            cachedStrip = static_cast<int>(strip);
+        }
+
+        const quint32 rowInStrip =
+            sourceY - strip * info.rowsPerStrip;
+
+        uchar *destination = preview.scanLine(py);
+
+        for (int px = 0; px < previewWidth; ++px)
+        {
+            const quint32 sourceX = static_cast<quint32>(
+                std::min<quint64>(
+                    info.width - 1,
+                    (static_cast<quint64>(2 * px + 1) * info.width) /
+                        (2u * static_cast<quint64>(previewWidth))
+                )
+            );
+
+            const int pixelIndex = static_cast<int>(
+                static_cast<quint64>(rowInStrip) * info.width +
+                sourceX
+            );
+
+            quint8 values[3] = {0, 0, 0};
+            bool isBackground = hasNoData;
+
+            for (quint16 band = 0;
+                 band < info.samplesPerPixel; ++band)
+            {
+                const qint64 value =
+                    (info.planarConfig == PlanarContig)
+                    ? numericSample(
+                        contig,
+                        pixelIndex * info.samplesPerPixel + band,
+                        info
+                      )
+                    : numericSample(planes[band], pixelIndex, info);
+
+                values[band] = contrast(value, stats.at(band),
+                                        hasNoData, noData);
+
+                if (!noDataMatches(value, hasNoData, noData))
+                    isBackground = false;
+            }
+
+            const int dst = px * 4;
+
+            if (info.samplesPerPixel == 1)
+            {
+                destination[dst + 0] = values[0];
+                destination[dst + 1] = values[0];
+                destination[dst + 2] = values[0];
+            }
+            else
+            {
+                destination[dst + 0] = values[0];
+                destination[dst + 1] = values[1];
+                destination[dst + 2] = values[2];
+            }
+
+            destination[dst + 3] =
+                isBackground ? static_cast<uchar>(0)
+                             : static_cast<uchar>(255);
+        }
+    }
+
+    out << "Route texture preview: "
+        << previewWidth << " x " << previewHeight
+        << " (RGBA, background transparent)\n";
+    out.flush();
+    return true;
+}
+
 }
 
 ContrastBandStats::ContrastBandStats()
@@ -1636,9 +1800,13 @@ bool RasterContrast::process(const QString &inputPath,
                              const QString &noDataText,
                              ContrastResult &result,
                              QTextStream &out,
-                             QString &error)
+                             QString &error,
+                             QImage *routePreview,
+                             int maxPreviewDimension)
 {
     result = ContrastResult();
+    if (routePreview)
+        *routePreview = QImage();
     error.clear();
 
     if (QFileInfo(inputPath).absoluteFilePath() ==
@@ -1804,6 +1972,15 @@ bool RasterContrast::process(const QString &inputPath,
                          outputPath,
                          out,
                          error))
+    {
+        return false;
+    }
+
+    if (routePreview &&
+        !createRoutePreview(input, info, result.bands,
+                            hasNoData, noDataInteger,
+                            maxPreviewDimension,
+                            *routePreview, out, error))
     {
         return false;
     }
