@@ -949,6 +949,128 @@ int histogramSize(const ImageInfo &info)
     return info.bitsPerSample == 8 ? 256 : 65536;
 }
 
+bool readDecodedTileRow(QFile &file,
+                        const ImageInfo &info,
+                        int logicalStrip,
+                        quint32 rows,
+                        quint16 components,
+                        QByteArray &decoded,
+                        QString &error)
+{
+    const quint32 tilesX =
+        (info.width + info.tileWidth - 1) / info.tileWidth;
+    const quint32 tilesY =
+        (info.height + info.tileLength - 1) / info.tileLength;
+
+    const int stripRows = static_cast<int>(tilesY);
+    const int plane = (info.planarConfig == PlanarContig)
+        ? 0
+        : logicalStrip / stripRows;
+    const int tileRow = (info.planarConfig == PlanarContig)
+        ? logicalStrip
+        : logicalStrip % stripRows;
+
+    if (plane >= info.samplesPerPixel ||
+        tileRow < 0 || tileRow >= stripRows)
+    {
+        error = "Invalid TIFF tile row index";
+        return false;
+    }
+
+    const quint32 bytesPerPixel =
+        components * (info.bitsPerSample / 8);
+    const quint64 rowBytes =
+        static_cast<quint64>(info.width) * bytesPerPixel;
+    const quint64 totalBytes = rowBytes * rows;
+
+    if (totalBytes > 0x7fffffffULL)
+    {
+        error = "Decoded TIFF tile row is too large";
+        return false;
+    }
+
+    decoded = QByteArray(static_cast<int>(totalBytes), 0);
+
+    for (quint32 tx = 0; tx < tilesX; ++tx)
+    {
+        const quint64 index64 =
+            (static_cast<quint64>(plane) * tilesY +
+             static_cast<quint64>(tileRow)) * tilesX + tx;
+
+        if (index64 >= static_cast<quint64>(info.stripOffsets.size()))
+        {
+            error = "TIFF tile offset table is incomplete";
+            return false;
+        }
+
+        const int index = static_cast<int>(index64);
+
+        QByteArray encoded;
+
+        if (!readAt(file,
+                    info.stripOffsets.at(index),
+                    info.stripByteCounts.at(index),
+                    encoded))
+        {
+            error = QString("Cannot read TIFF tile %1").arg(index);
+            return false;
+        }
+
+        const quint64 fullTileBytes =
+            static_cast<quint64>(info.tileWidth) *
+            info.tileLength * bytesPerPixel;
+
+        if (fullTileBytes > 0x7fffffffULL)
+        {
+            error = "TIFF tile is too large";
+            return false;
+        }
+
+        QByteArray tile;
+
+        if (!decodeSegment(encoded, info.compression,
+                           static_cast<int>(fullTileBytes),
+                           tile, error))
+        {
+            return false;
+        }
+
+        if (info.predictor == 2)
+        {
+            reverseHorizontalPredictor(
+                tile,
+                info.tileWidth,
+                info.tileLength,
+                components,
+                info.bitsPerSample,
+                info.littleEndian
+            );
+        }
+
+        const quint32 actualWidth =
+            std::min(info.tileWidth,
+                     info.width - tx * info.tileWidth);
+        const quint64 copyBytes =
+            static_cast<quint64>(actualWidth) * bytesPerPixel;
+        const quint64 tileRowBytes =
+            static_cast<quint64>(info.tileWidth) * bytesPerPixel;
+
+        for (quint32 row = 0; row < rows; ++row)
+        {
+            std::memcpy(
+                decoded.data() +
+                    static_cast<size_t>(row * rowBytes +
+                                        tx * info.tileWidth * bytesPerPixel),
+                tile.constData() +
+                    static_cast<size_t>(row * tileRowBytes),
+                static_cast<size_t>(copyBytes)
+            );
+        }
+    }
+
+    return true;
+}
+
 bool readDecodedStrip(QFile &file,
                       const ImageInfo &info,
                       int stripIndex,
@@ -957,6 +1079,12 @@ bool readDecodedStrip(QFile &file,
                       QByteArray &decoded,
                       QString &error)
 {
+    if (info.tiled)
+    {
+        return readDecodedTileRow(file, info, stripIndex,
+                                  rows, components, decoded, error);
+    }
+
     if (stripIndex < 0 ||
         stripIndex >= info.stripOffsets.size())
     {
