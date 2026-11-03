@@ -39,3 +39,9 @@ task_05/data/*.tiff
 Thumbs.db
 .vscode/
 .idea/
+
+# Local TIFF inputs and contrasted outputs for task 6
+task_06/maps/*
+!task_06/maps/.gitkeep
+task_06/data/*
+!task_06/data/.gitkeep
