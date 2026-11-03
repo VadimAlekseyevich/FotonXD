@@ -15,6 +15,8 @@
 class QEvent;
 class QMouseEvent;
 class QWheelEvent;
+class QImage;
+class GeoReference;
 
 class EarthWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
@@ -23,6 +25,15 @@ class EarthWidget : public QOpenGLWidget, protected QOpenGLFunctions
 public:
     explicit EarthWidget(const QString &mapDirectory = QString(), QWidget *parent = nullptr);
     ~EarthWidget() override;
+
+    bool loadRouteOverlay(const QImage &image,
+                          const GeoReference &geoReference,
+                          int originalWidth,
+                          int originalHeight,
+                          QString &error);
+
+    void clearRouteOverlay();
+    int routeTextureLimit() const;
 
 signals:
     void fpsChanged(int fps);
@@ -55,8 +66,13 @@ private:
     std::unique_ptr<QOpenGLBuffer> m_indexBuffer;
     QMatrix4x4 m_projection;
     GLuint m_textureId;
+    GLuint m_routeTextureId;
     int m_indexCount;
+    int m_routeIndexCount;
+    int m_maxTextureSize;
     bool m_hasTexture;
+    std::unique_ptr<QOpenGLBuffer> m_routeVertexBuffer;
+    std::unique_ptr<QOpenGLBuffer> m_routeIndexBuffer;
     float m_rotationX;
     float m_rotationY;
     float m_cameraDistance;
