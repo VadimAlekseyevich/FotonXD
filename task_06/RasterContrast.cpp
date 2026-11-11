@@ -1439,6 +1439,23 @@ bool finishOutputTiff(QFile &output,
         return false;
     }
 
+    // TIFF directory and out-of-line values must start on a word boundary.
+    // RGB rasters can have an odd number of data bytes.
+    if ((output.pos() & 1) != 0)
+    {
+        if (output.write("\0", 1) != 1)
+        {
+            error = "Failed to align TIFF directory";
+            return false;
+        }
+    }
+
+    if (output.pos() > 0xffffffffLL)
+    {
+        error = "Output exceeds the classic TIFF 4 GB limit";
+        return false;
+    }
+
     const quint32 ifdOffset =
         static_cast<quint32>(output.pos());
 
