@@ -7,7 +7,6 @@
 
 #include <cstring>
 
-// Вспомогательный разбор TIFF/GeoTIFF, не доступный из других файлов.
 namespace
 {
 const quint16 TagImageWidth = 256;
@@ -39,7 +38,7 @@ const quint16 GeoKeyStraightVertPoleLong = 3095;
 
 const quint16 RasterPixelIsPoint = 2;
 
-// Элемент каталога IFD: тег, тип, число значений и их адрес.
+// Одна запись каталога TIFF (IFD): тег, тип, длина и адрес значения.
 struct TiffEntry
 {
     quint16 tag;
@@ -49,7 +48,6 @@ struct TiffEntry
     QByteArray inlineValue;
 };
 
-// Читаем число из двух байтов с учётом порядка байтов TIFF.
 quint16 readU16(const QByteArray &data, int offset, bool littleEndian)
 {
     const uchar b0 = static_cast<uchar>(data.at(offset));
@@ -61,7 +59,6 @@ quint16 readU16(const QByteArray &data, int offset, bool littleEndian)
     return static_cast<quint16>((static_cast<quint16>(b0) << 8) | b1);
 }
 
-// Читаем 32-битное число в порядке little-endian или big-endian.
 quint32 readU32(const QByteArray &data, int offset, bool littleEndian)
 {
     quint32 value = 0;
@@ -86,7 +83,6 @@ quint32 readU32(const QByteArray &data, int offset, bool littleEndian)
     return value;
 }
 
-// Читаем восемь байтов, сохраняя правильный порядок.
 quint64 readU64(const QByteArray &data, int offset, bool littleEndian)
 {
     quint64 value = 0;
@@ -111,7 +107,6 @@ quint64 readU64(const QByteArray &data, int offset, bool littleEndian)
     return value;
 }
 
-// Преобразуем 64-битное представление в double для параметров проекции.
 double readF64(const QByteArray &data, int offset, bool littleEndian)
 {
     const quint64 bits = readU64(data, offset, littleEndian);
@@ -120,7 +115,6 @@ double readF64(const QByteArray &data, int offset, bool littleEndian)
     return value;
 }
 
-// Определяем размер одного элемента TIFF-тега по его типу.
 int typeSize(quint16 type)
 {
     switch (type)
@@ -150,7 +144,6 @@ int typeSize(quint16 type)
     }
 }
 
-// Считываем указанное число байтов по смещению файла и проверяем длину.
 bool readAt(QFile &file, quint32 offset, qint64 size, QByteArray &data)
 {
     if (!file.seek(static_cast<qint64>(offset)))
@@ -160,7 +153,7 @@ bool readAt(QFile &file, quint32 offset, qint64 size, QByteArray &data)
     return data.size() == size;
 }
 
-// Значение тега может помещаться прямо в IFD или лежать по смещению.
+// Маленькое значение хранится прямо в IFD, большое — по смещению.
 bool entryData(QFile &file,
                const TiffEntry &entry,
                QByteArray &data)
@@ -198,7 +191,6 @@ const TiffEntry *findEntry(const QVector<TiffEntry> &entries, quint16 tag)
     return 0;
 }
 
-// Извлекаем первое целочисленное значение из записи TIFF.
 bool firstUnsigned(QFile &file,
                    const TiffEntry &entry,
                    bool littleEndian,
@@ -223,7 +215,6 @@ bool firstUnsigned(QFile &file,
     return false;
 }
 
-// Получаем массив 16-битных значений, в частности GeoKeyDirectory.
 bool shortValues(QFile &file,
                  const TiffEntry &entry,
                  bool littleEndian,
@@ -248,7 +239,6 @@ bool shortValues(QFile &file,
     return true;
 }
 
-// Получаем массив дробных параметров, записанных в GeoTIFF.
 bool doubleValues(QFile &file,
                   const TiffEntry &entry,
                   bool littleEndian,
@@ -273,7 +263,6 @@ bool doubleValues(QFile &file,
     return true;
 }
 
-// Извлекаем текстовый TIFF-тег, например GDAL_NODATA.
 bool asciiValue(QFile &file,
                 const TiffEntry &entry,
                 QString &value)
@@ -293,7 +282,6 @@ bool asciiValue(QFile &file,
     return !value.isEmpty();
 }
 
-// По ссылке из географического ключа находим соответствующее значение double.
 bool geoDoubleValue(const QVector<double> &doubleParams,
                     quint16 location,
                     quint16 count,
@@ -313,7 +301,6 @@ bool geoDoubleValue(const QVector<double> &doubleParams,
 }
 }
 
-// Обнуляем поля структуры, чтобы отличать отсутствующие данные от существующих.
 GeoTiffMetadata::GeoTiffMetadata()
     : width(0),
       height(0),
@@ -347,7 +334,7 @@ GeoTiffMetadata::GeoTiffMetadata()
         gt[i] = 0.0;
 }
 
-// Основной разбор файла: заголовок TIFF, каталог тегов, GeoKeys и геопривязка.
+// Читаем заголовок TIFF, каталог IFD и географические ключи.
 bool GeoTiffReader::read(const QString &filePath,
                          GeoTiffMetadata &metadata,
                          QString &error)
@@ -362,7 +349,6 @@ bool GeoTiffReader::read(const QString &filePath,
         return false;
     }
 
-// Читаем заголовок TIFF: порядок байтов, магическое число, смещение IFD.
     const QByteArray header = file.read(8);
     if (header.size() != 8)
     {
@@ -384,7 +370,7 @@ bool GeoTiffReader::read(const QString &filePath,
 
     const quint16 magic = readU16(header, 2, littleEndian);
 
-// BigTIFF здесь не поддерживается: структура такого файла отличается.
+    // BigTIFF здесь не поддерживается: у него другой формат каталога.
     if (magic == 43)
     {
         error = "BigTIFF is not supported by this task reader";
@@ -410,7 +396,6 @@ bool GeoTiffReader::read(const QString &filePath,
     QVector<TiffEntry> entries;
     entries.reserve(entryCount);
 
-// Извлекаем 12-байтные записи каталога TIFF.
     for (quint16 i = 0; i < entryCount; ++i)
     {
         QByteArray entryBytes;
@@ -433,7 +418,6 @@ bool GeoTiffReader::read(const QString &filePath,
         entries.push_back(entry);
     }
 
-// Определяем размеры растра по тегам ImageWidth и ImageLength.
     const TiffEntry *widthEntry = findEntry(entries, TagImageWidth);
     const TiffEntry *heightEntry = findEntry(entries, TagImageLength);
 
@@ -456,7 +440,7 @@ bool GeoTiffReader::read(const QString &filePath,
     metadata.width = static_cast<int>(width);
     metadata.height = static_cast<int>(height);
 
-// Необязательный ASCII-тег GDAL_NODATA задаёт значение фона.
+    // NoData хранится как текстовый TIFF-тег, а не как обычный пиксельный канал.
     const TiffEntry *noDataEntry = findEntry(entries, TagGdalNoData);
     if (noDataEntry)
     {
@@ -468,7 +452,7 @@ bool GeoTiffReader::read(const QString &filePath,
         }
     }
 
-// GeoKeyDirectory содержит сведения о системе координат и проекции.
+    // По GeoKeyDirectory узнаём систему координат и параметры проекции.
     const TiffEntry *geoKeyEntry = findEntry(entries, TagGeoKeyDirectory);
     if (!geoKeyEntry)
     {
@@ -483,7 +467,6 @@ bool GeoTiffReader::read(const QString &filePath,
         return false;
     }
 
-// Параметры пользовательской проекции могут храниться в отдельном массиве double.
     QVector<double> doubleParams;
     const TiffEntry *doubleEntry = findEntry(entries, TagGeoDoubleParams);
 
@@ -503,7 +486,6 @@ bool GeoTiffReader::read(const QString &filePath,
         return false;
     }
 
-// Сортируем и читаем географические ключи по их идентификаторам.
     QMap<quint16, quint16> shortGeoKeys;
 
     for (int i = 0; i < numberOfKeys; ++i)
@@ -585,7 +567,7 @@ bool GeoTiffReader::read(const QString &filePath,
     metadata.coordinateTransform = shortGeoKeys.value(GeoKeyCoordTransform, 0);
     metadata.linearUnits = shortGeoKeys.value(GeoKeyLinearUnits, 0);
 
-// Первый вариант геопривязки — готовая матрица координатного преобразования.
+    // Геопривязка может задаваться полной матрицей преобразования.
     const TiffEntry *matrixEntry = findEntry(entries, TagModelTransformation);
 
     if (matrixEntry)
@@ -609,7 +591,7 @@ bool GeoTiffReader::read(const QString &filePath,
     }
     else
     {
-// Второй вариант — размеры пикселя и опорная точка Tiepoint.
+        // Либо размером пикселя и опорной точкой ModelTiepoint.
         const TiffEntry *scaleEntry = findEntry(entries, TagModelPixelScale);
         const TiffEntry *tieEntry = findEntry(entries, TagModelTiepoint);
 
@@ -647,9 +629,7 @@ bool GeoTiffReader::read(const QString &filePath,
         metadata.hasGeoTransform = true;
     }
 
-    // PixelIsPoint хранит опорную точку в центре пикселя.
-    // Для задания переводим (0,0) к верхнему левому углу первого пикселя.
-// Приводим координаты центра пикселя к соглашению о его верхнем левом угле.
+    // Для PixelIsPoint переводим привязку из центра пикселя к его верхнему левому углу.
     if (metadata.rasterType == RasterPixelIsPoint)
     {
         metadata.gt[0] -= 0.5 * metadata.gt[1] + 0.5 * metadata.gt[2];

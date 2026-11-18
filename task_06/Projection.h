@@ -5,11 +5,10 @@
 
 struct GeoTiffMetadata;
 
-// Вычисляет преобразования между WGS84 и координатами карты в метрах.
+// Перевод координат WGS84 ↔ плоские координаты UTM/полярной стереографии.
 class Projection
 {
 public:
-// Возможные проекции: неизвестная, UTM или полярная UPS.
     enum Type
     {
         Unknown,
@@ -19,26 +18,22 @@ public:
 
     Projection();
 
-// Настройка по EPSG-коду или параметрам, записанным в GeoTIFF.
+    // Параметры берём из EPSG-кода или непосредственно из GeoTIFF.
     bool configureFromGeoTiff(const GeoTiffMetadata &metadata,
                               QString &error);
 
-// Настройка стандартных координатных систем по коду EPSG.
     bool configureFromEpsg(int epsgCode, QString &error);
 
-// Из плоских координат E,N в широту и долготу.
     bool projectedToGeo(double easting,
                         double northing,
                         double &latitudeDeg,
                         double &longitudeDeg) const;
 
-// Из широты и долготы в плоские E,N.
     bool geoToProjected(double latitudeDeg,
                         double longitudeDeg,
                         double &easting,
                         double &northing) const;
 
-// Набор геттеров для просмотра настроенной проекции.
     Type type() const;
     int epsgCode() const;
     int utmZone() const;
@@ -54,9 +49,7 @@ public:
 
     QString description() const;
 
-// Внешние классы не вызывают внутренние математические формулы напрямую.
 private:
-// Прямое и обратное преобразования UTM.
     bool utmForward(double latitudeDeg,
                     double longitudeDeg,
                     double &easting,
@@ -67,7 +60,6 @@ private:
                     double &latitudeDeg,
                     double &longitudeDeg) const;
 
-// Прямое и обратное преобразования полярной стереографии.
     bool upsForward(double latitudeDeg,
                     double longitudeDeg,
                     double &easting,
@@ -78,7 +70,6 @@ private:
                     double &latitudeDeg,
                     double &longitudeDeg) const;
 
-// Поля хранят тип, номер зоны, полушарие и параметры проекции.
     Type m_type;
     int m_epsgCode;
     int m_utmZone;

@@ -9,12 +9,9 @@
 #include <QtMath>
 #include <cmath>
 
-// Геометрия здесь сферическая, а не эллипсоид WGS84.
-// Обратная model-view учитывает масштабирование, перенос камеры и вращение.
-// Алгоритм для курсора: экранная точка → луч камеры → пересечение с единичной сферой.
+// Работаем с единичной сферой, не с эллипсоидом WGS84.
 namespace GeoPicking
 {
-// inline-функция расположена в заголовке и возвращает признак попадания луча на глобус.
 inline bool screenToGeodetic(const QPoint &pixel,
                             const QSize &viewport,
                             const QMatrix4x4 &projection,
@@ -22,7 +19,6 @@ inline bool screenToGeodetic(const QPoint &pixel,
                             double &latitude,
                             double &longitude)
 {
-// Сбрасываем выход и проверяем, что курсор внутри виджета.
     latitude = 0.0;
     longitude = 0.0;
 
@@ -31,25 +27,22 @@ inline bool screenToGeodetic(const QPoint &pixel,
         pixel.y() < 0 || pixel.y() >= viewport.height())
         return false;
 
-    // QMouseEvent сообщает логические координаты виджета; матрица перспективы
-    // использует те же единицы, поэтому devicePixelRatio не нужен.
-// Преобразуем координаты пикселя в диапазон NDC от -1 до +1.
+    // Координаты мыши и размеры виджета заданы в одних логических пикселях.
     const float ndcX = 2.0f * (pixel.x() + 0.5f) / viewport.width() - 1.0f;
     const float ndcY = 1.0f - 2.0f * (pixel.y() + 0.5f) / viewport.height();
 
-// Обратная матрица перспективы восстанавливает направление луча камеры.
+    // Обратная матрица проекции переводит точку экрана в направление луча.
     bool invertible = false;
     const QMatrix4x4 inverseProjection = projection.inverted(&invertible);
     if (!invertible)
         return false;
 
-    // В системе координат камеры луч выходит из (0,0,0) через пиксель экрана.
     const QVector4D nearPoint =
         inverseProjection * QVector4D(ndcX, ndcY, -1.0f, 1.0f);
     const QVector3D cameraDirection =
         nearPoint.toVector3DAffine().normalized();
 
-// Обратная матрица снимает повороты и смещение камеры.
+    // Обратная model-view учитывает положение камеры и поворот глобуса.
     const QMatrix4x4 inverseModelView = modelView.inverted(&invertible);
     if (!invertible)
         return false;
@@ -58,9 +51,7 @@ inline bool screenToGeodetic(const QPoint &pixel,
     const QVector3D direction =
         inverseModelView.mapVector(cameraDirection).normalized();
 
-    // Решаем уравнение |origin + t*direction|² = 1 для единичной сферы.
-    // Берём ближайший положительный корень: это видимая точка поверхности.
-// Решаем квадратное уравнение пересечения луча с единичной сферой.
+    // Находим ближайшее положительное пересечение луча с единичной сферой.
     const double halfB = QVector3D::dotProduct(origin, direction);
     const double c = QVector3D::dotProduct(origin, origin) - 1.0;
     const double discriminant = halfB * halfB - c;
@@ -74,13 +65,9 @@ inline bool screenToGeodetic(const QPoint &pixel,
     if (t < 0.0)
         return false;
 
-// Нормализуем найденную точку пересечения до радиуса 1.
     const QVector3D hit = (origin + static_cast<float>(t) * direction).normalized();
 
-    // Используем ту же ориентацию осей, что и вершины глобуса:
-    // X = cos(lat)*sin(lon), Y = sin(lat), Z = cos(lat)*cos(lon).
-    // Положительная долгота означает восточное направление.
-// Получаем градусные широту и долготу по координатам XYZ.
+    // Оси должны совпадать с формулами построения сферы в EarthWidget.
     latitude = qRadiansToDegrees(
         std::asin(qBound(-1.0, static_cast<double>(hit.y()), 1.0)));
     longitude = qRadiansToDegrees(

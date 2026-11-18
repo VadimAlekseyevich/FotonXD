@@ -11,10 +11,9 @@
 #include <cmath>
 #include <cstring>
 
-// Внутренние вспомогательные методы самостоятельного TIFF-декодера.
 namespace
 {
-// Номера стандартных TIFF-тегов, описывающих изображение и его хранение.
+// Основные TIFF-теги: размеры, разрядность, расположение данных и сжатие.
 const quint16 TagImageWidth = 256;
 const quint16 TagImageLength = 257;
 const quint16 TagBitsPerSample = 258;
@@ -38,7 +37,6 @@ const quint16 TypeAscii = 2;
 const quint16 TypeShort = 3;
 const quint16 TypeLong = 4;
 
-// Поддерживаем несжатые полосы, LZW, PackBits и Deflate.
 const quint16 CompressionNone = 1;
 const quint16 CompressionLzw = 5;
 const quint16 CompressionPackBits = 32773;
@@ -55,7 +53,6 @@ const quint16 PlanarSeparate = 2;
 const quint16 SampleFormatUint = 1;
 const quint16 SampleFormatInt = 2;
 
-// Запись каталога IFD: номер тега, тип, длина и смещение.
 struct TiffEntry
 {
     quint16 tag;
@@ -65,7 +62,7 @@ struct TiffEntry
     QByteArray inlineValue;
 };
 
-// Информация о растре: каналы, разрядность, тайлы, полосы, предиктор и сжатие.
+// Сюда собираем параметры хранения пикселей, прочитанные из TIFF.
 struct ImageInfo
 {
     ImageInfo()
@@ -106,7 +103,6 @@ struct ImageInfo
     QVector<quint32> stripByteCounts;
 };
 
-// Читаем двухбайтовое число из TIFF с учётом порядка байтов.
 quint16 readU16(const QByteArray &data, int offset, bool littleEndian)
 {
     const quint16 a = static_cast<quint8>(data.at(offset));
@@ -117,7 +113,6 @@ quint16 readU16(const QByteArray &data, int offset, bool littleEndian)
         : static_cast<quint16>((a << 8) | b);
 }
 
-// Читаем четырёхбайтовое число TIFF.
 quint32 readU32(const QByteArray &data, int offset, bool littleEndian)
 {
     quint32 result = 0;
@@ -142,14 +137,12 @@ quint32 readU32(const QByteArray &data, int offset, bool littleEndian)
     return result;
 }
 
-// Записываем 16-битное little-endian значение в выходной файл.
 void appendU16LE(QByteArray &data, quint16 value)
 {
     data.append(static_cast<char>(value & 0xff));
     data.append(static_cast<char>((value >> 8) & 0xff));
 }
 
-// Записываем 32-битное little-endian значение.
 void appendU32LE(QByteArray &data, quint32 value)
 {
     data.append(static_cast<char>(value & 0xff));
@@ -158,7 +151,6 @@ void appendU32LE(QByteArray &data, quint32 value)
     data.append(static_cast<char>((value >> 24) & 0xff));
 }
 
-// Извлекаем нужный участок файла без загрузки всего TIFF в память.
 bool readAt(QFile &file, quint32 offset, quint32 size, QByteArray &data)
 {
     if (!file.seek(offset))
@@ -168,7 +160,6 @@ bool readAt(QFile &file, quint32 offset, quint32 size, QByteArray &data)
     return data.size() == static_cast<int>(size);
 }
 
-// Размер элемента TIFF-тега зависит от его типа.
 int typeSize(quint16 type)
 {
     switch (type)
@@ -185,7 +176,7 @@ int typeSize(quint16 type)
     }
 }
 
-// Небольшие значения размещены прямо в каталоге, остальные — по файловому смещению.
+// Длинные значения тегов лежат отдельно от каталога IFD.
 bool entryData(QFile &file,
                const TiffEntry &entry,
                QByteArray &data)
@@ -225,7 +216,6 @@ const TiffEntry *findEntry(const QVector<TiffEntry> &entries,
     return 0;
 }
 
-// Считываем все целочисленные значения TIFF-тега.
 bool unsignedValues(QFile &file,
                     const TiffEntry &entry,
                     bool littleEndian,
@@ -258,7 +248,6 @@ bool unsignedValues(QFile &file,
     return false;
 }
 
-// Получаем первое число из тега с проверкой и значением по умолчанию.
 bool firstUnsigned(QFile &file,
                    const QVector<TiffEntry> &entries,
                    quint16 tag,
@@ -286,7 +275,7 @@ bool firstUnsigned(QFile &file,
     return true;
 }
 
-// Читаем технические TIFF-теги, проверяем поддерживаемые форматы пикселей.
+// Проверяем формат растра и читаем расположение полос/тайлов.
 bool parseTiff(QFile &file,
                ImageInfo &info,
                QString &error)
@@ -297,7 +286,6 @@ bool parseTiff(QFile &file,
         return false;
     }
 
-// Сигнатура classic TIFF (42), порядок байтов и адрес IFD находятся в заголовке.
     const QByteArray header = file.read(8);
 
     if (header.size() != 8)
@@ -390,7 +378,6 @@ bool parseTiff(QFile &file,
     }
     info.samplesPerPixel = static_cast<quint16>(value);
 
-// Число бит на канал должно быть согласовано у всех каналов изображения.
     const TiffEntry *bitsEntry = findEntry(entries, TagBitsPerSample);
 
     if (!bitsEntry)
@@ -499,8 +486,7 @@ bool parseTiff(QFile &file,
             return false;
         }
 
-        // В остальной части контрастирования данные обрабатываются полосами;
-        // тайловый растр заранее собираем в такие логические полосы.
+        // Тайлы преобразуем в логические полосы для общего алгоритма обработки.
         info.rowsPerStrip = info.tileLength;
     }
 
@@ -599,7 +585,6 @@ bool parseTiff(QFile &file,
     return true;
 }
 
-// Алгоритм PackBits восстанавливает последовательности повторяющихся байтов.
 bool decodePackBits(const QByteArray &input,
                     int expectedSize,
                     QByteArray &output,
@@ -659,7 +644,6 @@ bool decodePackBits(const QByteArray &input,
     return true;
 }
 
-// Извлекаем коды LZW на уровне битов, начиная со старшего бита.
 class MsbBitReader
 {
 public:
@@ -698,7 +682,7 @@ private:
     int m_bitPosition;
 };
 
-// Словарный декодер LZW восстанавливает содержимое TIFF-блока.
+// TIFF с LZW сжат словарным алгоритмом; коды считываются побитно.
 bool decodeLzw(const QByteArray &input,
                int expectedSize,
                QByteArray &output,
@@ -760,7 +744,7 @@ bool decodeLzw(const QByteArray &input,
             added.append(current.at(0));
             dictionary[nextCode++] = added;
 
-            // В TIFF LZW размер кода увеличивается по правилу раннего перехода (early change).
+            // У TIFF LZW используется правило раннего увеличения длины кода.
             if (codeSize < 12 &&
                 nextCode == ((1 << codeSize) - 1))
             {
@@ -785,7 +769,7 @@ bool decodeLzw(const QByteArray &input,
     return true;
 }
 
-// Выбираем алгоритм распаковки: none, LZW, PackBits или Deflate.
+// Выбираем распаковку блока по тегу Compression.
 bool decodeSegment(const QByteArray &encoded,
                    quint16 compression,
                    int expectedSize,
@@ -844,7 +828,6 @@ bool decodeSegment(const QByteArray &encoded,
     return false;
 }
 
-// Читаем 8/16-битное значение пикселя из массива байтов.
 quint32 rawSample(const QByteArray &data,
                   int sampleIndex,
                   int bitsPerSample,
@@ -857,7 +840,6 @@ quint32 rawSample(const QByteArray &data,
     return readU16(data, offset, littleEndian);
 }
 
-// Записываем образец для восстановления горизонтального предиктора.
 void setRawSample(QByteArray &data,
                   int sampleIndex,
                   int bitsPerSample,
@@ -888,7 +870,7 @@ void setRawSample(QByteArray &data,
     }
 }
 
-// Компенсируем Predictor=2: данные содержат разности соседних пикселей по строке.
+// Predictor=2 хранит разности соседних значений. Перед обработкой восстанавливаем исходные.
 void reverseHorizontalPredictor(QByteArray &data,
                                 quint32 width,
                                 quint32 rows,
@@ -941,7 +923,6 @@ void reverseHorizontalPredictor(QByteArray &data,
     }
 }
 
-// Получаем знаковое или беззнаковое числовое значение яркости.
 qint64 numericSample(const QByteArray &data,
                      int sampleIndex,
                      const ImageInfo &info)
@@ -961,7 +942,6 @@ qint64 numericSample(const QByteArray &data,
     return static_cast<qint16>(raw & 0xffff);
 }
 
-// Минимально возможное значение яркости зависит от битности и знака.
 qint64 minimumSample(const ImageInfo &info)
 {
     if (info.sampleFormat == SampleFormatInt)
@@ -970,13 +950,12 @@ qint64 minimumSample(const ImageInfo &info)
     return 0;
 }
 
-// Размер гистограммы выбирается по числу возможных значений канала.
 int histogramSize(const ImageInfo &info)
 {
     return info.bitsPerSample == 8 ? 256 : 65536;
 }
 
-// Объединяем тайлы одного ряда в непрерывную полосу пикселей.
+// Для тайлового TIFF собираем соседние тайлы в одну строковую полосу.
 bool readDecodedTileRow(QFile &file,
                         const ImageInfo &info,
                         int logicalStrip,
@@ -1099,7 +1078,6 @@ bool readDecodedTileRow(QFile &file,
     return true;
 }
 
-// Читаем логическую полосу TIFF и отменяем горизонтальный предиктор.
 bool readDecodedStrip(QFile &file,
                       const ImageInfo &info,
                       int stripIndex,
@@ -1168,7 +1146,7 @@ bool readDecodedStrip(QFile &file,
     return true;
 }
 
-// NoData исключается только при наличии соответствующего тега.
+// Значение NoData не должно попадать в статистику.
 bool noDataMatches(qint64 value,
                    bool hasNoData,
                    qint64 noData)
@@ -1176,7 +1154,6 @@ bool noDataMatches(qint64 value,
     return hasNoData && value == noData;
 }
 
-// Прогресс выводим каждые 10%, чтобы не засорять консоль.
 void progress(QTextStream &out,
               const QString &phase,
               int percent,
@@ -1192,7 +1169,7 @@ void progress(QTextStream &out,
     out.flush();
 }
 
-// Для каждого канала ищем нижний и верхний пороги по 2% гистограммы.
+// Определяем границы по 2% действительных значений с каждого края гистограммы.
 ContrastBandStats limitsFromHistogram(
     const QVector<quint64> &histogram,
     quint64 validCount,
@@ -1204,7 +1181,6 @@ ContrastBandStats limitsFromHistogram(
     if (validCount == 0)
         return result;
 
-// От каждого края распределения исключаются 2% действительных пикселей.
     const quint64 clip =
         static_cast<quint64>(
             std::floor(validCount * 0.02)
@@ -1213,7 +1189,6 @@ ContrastBandStats limitsFromHistogram(
     quint64 sum = 0;
     int lowIndex = 0;
 
-// Нижний порог выбирается по накопленной сумме гистограммы.
     for (int i = 0; i < histogram.size(); ++i)
     {
         sum += histogram.at(i);
@@ -1228,7 +1203,6 @@ ContrastBandStats limitsFromHistogram(
     sum = 0;
     int highIndex = histogram.size() - 1;
 
-// Верхний порог выбирается по накопленной сумме с противоположного края.
     for (int i = histogram.size() - 1; i >= 0; --i)
     {
         sum += histogram.at(i);
@@ -1246,7 +1220,7 @@ ContrastBandStats limitsFromHistogram(
     return result;
 }
 
-// Линейно отображаем диапазон между порогами в 0..255, ограничивая края.
+// Порогам low/high сопоставляем значения 0/255; внутри — линейное растяжение.
 quint8 contrast(qint64 value,
                 const ContrastBandStats &stats,
                 bool hasNoData,
@@ -1264,7 +1238,6 @@ quint8 contrast(qint64 value,
     if (value >= stats.high)
         return 255;
 
-// Нормируем яркость внутри выбранного интервала, затем умножаем на 255.
     const double t =
         static_cast<double>(value - stats.low) /
         static_cast<double>(stats.high - stats.low);
@@ -1279,7 +1252,7 @@ quint8 contrast(qint64 value,
     return static_cast<quint8>(v);
 }
 
-// Первый проход по растру: считаем частоты яркости отдельно для каждого канала.
+// Первый проход: считаем гистограммы отдельно для каждого канала.
 bool buildHistograms(QFile &file,
                      const ImageInfo &info,
                      bool hasNoData,
@@ -1435,7 +1408,6 @@ bool buildHistograms(QFile &file,
     return true;
 }
 
-// Представление одной записи IFD для сохраняемого TIFF.
 struct IfdEntryOut
 {
     quint16 tag;
@@ -1444,7 +1416,6 @@ struct IfdEntryOut
     quint32 value;
 };
 
-// Пишем 12-байтную запись TIFF-каталога в выходной файл.
 void appendIfdEntry(QByteArray &data,
                     const IfdEntryOut &entry)
 {
@@ -1465,7 +1436,7 @@ void appendIfdEntry(QByteArray &data,
     }
 }
 
-// Записываем каталог тегов и смещение каталога в заголовок готового TIFF.
+// В выходной TIFF пишем базовые теги; исходную GeoTIFF-геопривязку не переносим.
 bool finishOutputTiff(QFile &output,
                       const ImageInfo &info,
                       quint32 rowsPerStrip,
@@ -1483,7 +1454,6 @@ bool finishOutputTiff(QFile &output,
     const quint32 ifdOffset =
         static_cast<quint32>(output.pos());
 
-// Выходной TIFF содержит базовые теги; GeoTIFF-метаданные из исходника сюда не копируются.
     const int entryCount = 10;
 
     quint32 extraOffset =
@@ -1645,7 +1615,7 @@ bool finishOutputTiff(QFile &output,
     return true;
 }
 
-// Второй проход: применяем пороги гистограммы и сохраняем 8-битные пиксели.
+// Второй проход: сохраняем контрастированный 8-битный TIFF.
 bool writeContrasted(QFile &input,
                      const ImageInfo &info,
                      const QVector<ContrastBandStats> &stats,
@@ -1835,7 +1805,7 @@ bool writeContrasted(QFile &input,
     return true;
 }
 
-// Третий проход: создаём уменьшенную RGBA-текстуру с прозрачным NoData.
+// Третий проход: создаём уменьшенное RGBA-превью для глобуса.
 bool createRoutePreview(QFile &input,
                         const ImageInfo &info,
                         const QVector<ContrastBandStats> &stats,
@@ -1849,7 +1819,6 @@ bool createRoutePreview(QFile &input,
     if (maxDimension < 1)
         maxDimension = 2048;
 
-// Подбираем масштаб уменьшенного превью с сохранением пропорций.
     const double factor = std::min(
         1.0,
         static_cast<double>(maxDimension) /
@@ -1881,7 +1850,6 @@ bool createRoutePreview(QFile &input,
     QByteArray contig;
     QVector<QByteArray> planes(info.samplesPerPixel);
 
-// Для каждой строки превью выбираем соответствующую строку исходного TIFF.
     for (int py = 0; py < previewHeight; ++py)
     {
         const quint32 sourceY = static_cast<quint32>(
@@ -1935,7 +1903,6 @@ bool createRoutePreview(QFile &input,
 
         uchar *destination = preview.scanLine(py);
 
-// По ближайшему соседу переносим значение исходного пикселя в превью.
         for (int px = 0; px < previewWidth; ++px)
         {
             const quint32 sourceX = static_cast<quint32>(
@@ -1952,7 +1919,7 @@ bool createRoutePreview(QFile &input,
             );
 
             quint8 values[3] = {0, 0, 0};
-// RGBA-пиксель прозрачен, только если все его каналы соответствуют NoData.
+            // Пиксель прозрачен, только если все его каналы соответствуют NoData.
             bool isBackground = hasNoData;
 
             for (quint16 band = 0;
@@ -1989,7 +1956,6 @@ bool createRoutePreview(QFile &input,
                 destination[dst + 2] = values[2];
             }
 
-// Альфа 0 означает фон, 255 — непрозрачный действительный пиксель.
             destination[dst + 3] =
                 isBackground ? static_cast<uchar>(0)
                              : static_cast<uchar>(255);
@@ -2005,7 +1971,6 @@ bool createRoutePreview(QFile &input,
 
 }
 
-// Начальные значения статистики канала.
 ContrastBandStats::ContrastBandStats()
     : low(0),
       high(0),
@@ -2013,7 +1978,6 @@ ContrastBandStats::ContrastBandStats()
 {
 }
 
-// Начальные значения результата обработки растра.
 ContrastResult::ContrastResult()
     : width(0),
       height(0),
@@ -2024,7 +1988,7 @@ ContrastResult::ContrastResult()
 {
 }
 
-// Основной публичный метод: TIFF → гистограмма → 8-bit TIFF → QImage RGBA.
+// Общий порядок: разбор TIFF → статистика → файл _8bit → RGBA-превью.
 bool RasterContrast::process(const QString &inputPath,
                              const QString &outputPath,
                              bool hasNoData,
@@ -2040,7 +2004,7 @@ bool RasterContrast::process(const QString &inputPath,
         *routePreview = QImage();
     error.clear();
 
-// Защита от перезаписи исходного TIFF результирующим файлом.
+    // Не разрешаем перезаписать исходный TIFF результатом.
     if (QFileInfo(inputPath).absoluteFilePath() ==
         QFileInfo(outputPath).absoluteFilePath())
     {
@@ -2052,7 +2016,6 @@ bool RasterContrast::process(const QString &inputPath,
     double noDataValue = 0.0;
     qint64 noDataInteger = 0;
 
-// Преобразуем текстовое значение NoData в число и проверяем его допустимость.
     if (hasNoData)
     {
         bool ok = false;
@@ -2097,7 +2060,6 @@ bool RasterContrast::process(const QString &inputPath,
     if (!parseTiff(input, info, error))
         return false;
 
-// Проверяем диапазон яркости выбранной разрядности и знаковости.
     const qint64 minimum = minimumSample(info);
     const qint64 maximum =
         minimum + histogramSize(info) - 1;
@@ -2135,7 +2097,6 @@ bool RasterContrast::process(const QString &inputPath,
 
     out.flush();
 
-// Память под отдельную гистограмму для каждого цветового канала.
     QVector<QVector<quint64> > histograms(
         info.samplesPerPixel
     );
@@ -2155,7 +2116,6 @@ bool RasterContrast::process(const QString &inputPath,
             QVector<quint64>(bins, 0);
     }
 
-// Считаем гистограммы, исключая фоновые значения яркости.
     if (!buildHistograms(input,
                          info,
                          hasNoData,
@@ -2200,7 +2160,6 @@ bool RasterContrast::process(const QString &inputPath,
 
     out.flush();
 
-// После нахождения порогов сохраняем полный 8-битный TIFF.
     if (!writeContrasted(input,
                          info,
                          result.bands,
@@ -2213,7 +2172,6 @@ bool RasterContrast::process(const QString &inputPath,
         return false;
     }
 
-// По запросу графического окна дополнительно готовим QImage с прозрачностью.
     if (routePreview &&
         !createRoutePreview(input, info, result.bands,
                             hasNoData, noDataInteger,
