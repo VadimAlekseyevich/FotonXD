@@ -24,6 +24,7 @@ namespace
 const float Pi = 3.14159265358979323846f;
 }
 
+// Начальные значения камеры, ресурсов OpenGL и таймера кадров.
 EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
     : QOpenGLWidget(parent),
       m_mapDirectory(mapDirectory),
@@ -39,10 +40,12 @@ EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
       m_hasCursorPosition(false),
       m_frameCount(0)
 {
+// Виджет принимает мышь и использует полный режим перерисовки.
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setUpdateBehavior(QOpenGLWidget::NoPartialUpdate);
 
+// Таймер периодически вызывает update(), запрашивая следующий кадр.
     m_updateTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_updateTimer, &QTimer::timeout,
             this, [this]()
@@ -54,10 +57,12 @@ EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
     m_fpsTimer.start();
 }
 
+// При уничтожении освобождаем GPU-текстуры и буферы при текущем OpenGL-контексте.
 EarthWidget::~EarthWidget()
 {
     m_updateTimer.stop();
 
+// Операции OpenGL выполняем лишь при существующем контексте.
     if (context())
     {
         makeCurrent();
@@ -96,6 +101,7 @@ EarthWidget::~EarthWidget()
     }
 }
 
+// Стартовая настройка OpenGL: глубина, отсечение обратных граней, шейдеры, сфера, карта.
 void EarthWidget::initializeGL()
 {
     initializeOpenGLFunctions();
@@ -115,6 +121,7 @@ void EarthWidget::initializeGL()
     initializeTexture();
 }
 
+// Обновляем viewport и матрицу перспективы после изменения размеров окна.
 void EarthWidget::resizeGL(int width, int height)
 {
     if (height <= 0)
@@ -134,6 +141,7 @@ void EarthWidget::resizeGL(int width, int height)
         updateCursorCoordinates(m_lastCursorPosition);
 }
 
+// На каждом кадре сначала рисуем глобус, затем отдельную географическую сетку маршрута.
 void EarthWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -144,10 +152,12 @@ void EarthWidget::paintGL()
         return;
     }
 
+// Комбинация вида/модели с матрицей перспективы даёт итоговое преобразование вершин.
     const QMatrix4x4 modelView = modelViewMatrix();
 
     const QMatrix4x4 mvp = m_projection * modelView;
 
+// Активируем шейдерную программу и передаём uniform-параметры.
     m_program->bind();
     m_program->setUniformValue("u_mvp", mvp);
     m_program->setUniformValue("u_texture", 0);
@@ -159,6 +169,7 @@ void EarthWidget::paintGL()
         glBindTexture(GL_TEXTURE_2D, m_textureId);
     }
 
+// Подключаем буфер вершин и индексов базовой сферы.
     m_vertexBuffer->bind();
     m_indexBuffer->bind();
 
@@ -183,6 +194,7 @@ void EarthWidget::paintGL()
         static_cast<int>(sizeof(Vertex))
     );
 
+// Треугольники сферы рисуются по индексам уже загруженных вершин.
     glDrawElements(
         GL_TRIANGLES,
         m_indexCount,
@@ -201,13 +213,15 @@ void EarthWidget::paintGL()
 
     m_program->release();
 
-    // Draw the georeferenced raster as a thin triangulated surface
-    // above the globe, with alpha=0 for GDAL_NODATA pixels.
+    // Геопривязанный растр рисуется сеткой над поверхностью Земли.
+    // У пикселей GDAL_NODATA альфа-канал равен нулю.
+// Если маршрут существует, дополнительно рисуем его сетку поверх основной карты.
     if (m_routeTextureId != 0 &&
         m_routeVertexBuffer &&
         m_routeIndexBuffer &&
         m_routeIndexCount > 0)
     {
+// Альфа-смешивание обеспечивает прозрачность NoData; запись глубины временно отключена.
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(GL_FALSE);
@@ -236,6 +250,7 @@ void EarthWidget::paintGL()
             static_cast<int>(sizeof(Vertex))
         );
 
+// Отдельный вызов OpenGL рисует геопривязанный растр.
         glDrawElements(GL_TRIANGLES, m_routeIndexCount,
                        GL_UNSIGNED_INT, 0);
 
@@ -252,6 +267,7 @@ void EarthWidget::paintGL()
         glDisable(GL_BLEND);
     }
 
+// Раз в секунду измеряем FPS по числу реально нарисованных кадров.
     ++m_frameCount;
     const qint64 elapsedMs = m_fpsTimer.elapsed();
 
@@ -268,6 +284,7 @@ void EarthWidget::paintGL()
     }
 }
 
+// Матрица включает отдаление камеры и два поворота глобуса.
 QMatrix4x4 EarthWidget::modelViewMatrix() const
 {
     QMatrix4x4 matrix;
@@ -277,6 +294,7 @@ QMatrix4x4 EarthWidget::modelViewMatrix() const
     return matrix;
 }
 
+// Используем GeoPicking для вычисления широты и долготы под курсором.
 void EarthWidget::updateCursorCoordinates(const QPoint &position)
 {
     m_lastCursorPosition = position;
@@ -290,6 +308,7 @@ void EarthWidget::updateCursorCoordinates(const QPoint &position)
     emit coordinatesChanged(onGlobe, latitude, longitude);
 }
 
+// Запоминаем положение при нажатии левой кнопки для дальнейшего вращения.
 void EarthWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
@@ -302,6 +321,7 @@ void EarthWidget::mousePressEvent(QMouseEvent *event)
     QOpenGLWidget::mousePressEvent(event);
 }
 
+// Перемещение мыши изменяет углы сферы и обновляет координаты под курсором.
 void EarthWidget::mouseMoveEvent(QMouseEvent *event)
 {
     const QPoint currentPosition = event->pos();
@@ -317,10 +337,11 @@ void EarthWidget::mouseMoveEvent(QMouseEvent *event)
     event->accept();
 }
 
+// Колесо меняет расстояние камеры до Земли в допустимых пределах.
 void EarthWidget::wheelEvent(QWheelEvent *event)
 {
     const QPoint angle = event->angleDelta();
-    // Fallback for touchpads which only provide pixelDelta.
+    // Для тачпадов без angleDelta используем pixelDelta.
     const double steps = angle.y() != 0 ? angle.y() / 120.0
                                         : event->pixelDelta().y() / 50.0;
     if (steps != 0.0)
@@ -333,6 +354,7 @@ void EarthWidget::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
+// При уходе указателя снимаем признак попадания курсора на Землю.
 void EarthWidget::leaveEvent(QEvent *event)
 {
     m_hasCursorPosition = false;
@@ -340,8 +362,10 @@ void EarthWidget::leaveEvent(QEvent *event)
     QOpenGLWidget::leaveEvent(event);
 }
 
+// Компилируем GLSL вершинный и фрагментный шейдеры и линкуем их в программу.
 bool EarthWidget::initializeShaders()
 {
+// Вершинный шейдер переводит XYZ в экранные координаты через матрицу MVP.
     static const char *vertexShaderSource = R"(
         #version 120
 
@@ -359,6 +383,7 @@ bool EarthWidget::initializeShaders()
         }
     )";
 
+// Фрагментный шейдер берёт цвет из карты или рисует простой цвет при её отсутствии.
     static const char *fragmentShaderSource = R"(
         #version 120
 
@@ -399,8 +424,10 @@ bool EarthWidget::initializeShaders()
     return true;
 }
 
+// Строим единичную сферу из регулярной сетки широт и долгот.
 void EarthWidget::initializeSphere()
 {
+// Количество сегментов определяет число вершин и гладкость поверхности.
     const int longitudeSegments = 256;
     const int latitudeSegments = 128;
 
@@ -410,6 +437,7 @@ void EarthWidget::initializeSphere()
     vertices.reserve((latitudeSegments + 1) * (longitudeSegments + 1));
     indices.reserve(latitudeSegments * longitudeSegments * 6);
 
+// Генерируем вершины по широте/долготе и назначаем им UV-координаты текстуры.
     for (int latitudeIndex = 0; latitudeIndex <= latitudeSegments; ++latitudeIndex)
     {
         const float v = static_cast<float>(latitudeIndex) /
@@ -441,6 +469,7 @@ void EarthWidget::initializeSphere()
 
     const int rowSize = longitudeSegments + 1;
 
+// Каждая ячейка сетки превращается в два индексированных треугольника.
     for (int latitudeIndex = 0; latitudeIndex < latitudeSegments; ++latitudeIndex)
     {
         for (int longitudeIndex = 0; longitudeIndex < longitudeSegments; ++longitudeIndex)
@@ -466,6 +495,7 @@ void EarthWidget::initializeSphere()
 
     m_indexCount = indices.size();
 
+// Один раз помещаем геометрию сферы в VBO и IBO на стороне OpenGL.
     m_vertexBuffer.reset(new QOpenGLBuffer(QOpenGLBuffer::VertexBuffer));
     m_vertexBuffer->create();
     m_vertexBuffer->bind();
@@ -487,6 +517,7 @@ void EarthWidget::initializeSphere()
     m_indexBuffer->release();
 }
 
+// Подбираем наибольшую подходящую базовую карту по GL_MAX_TEXTURE_SIZE.
 void EarthWidget::initializeTexture()
 {
     GLint maxTextureSize = 0;
@@ -526,6 +557,7 @@ void EarthWidget::initializeTexture()
     );
 }
 
+// Просматриваем каталоги с Map_*.tiff и выбираем карту, подходящую видеокарте.
 QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height) const
 {
     width = 0;
@@ -534,6 +566,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
     QString bestPath;
     quint64 bestPixelCount = 0;
 
+// Лямбда сравнивает найденный файл с текущим лучшим вариантом по площади.
     const auto considerFile = [maxTextureSize, &bestPath, &bestPixelCount, &width, &height, this]
                               (const QString &filePath)
     {
@@ -594,6 +627,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
     if (!m_mapDirectory.isEmpty() && QFileInfo(m_mapDirectory).isDir())
         addDirectory(m_mapDirectory);
 
+// Поиск ведётся рядом с исполняемым файлом, исходниками и в maps предыдущих заданий.
     QStringList searchRoots;
     searchRoots << QDir::currentPath()
                 << QCoreApplication::applicationDirPath();
@@ -633,6 +667,7 @@ QString EarthWidget::findBestTexture(int maxTextureSize, int &width, int &height
     return bestPath;
 }
 
+// Через QImageReader узнаём размеры TIFF, чтобы исключить слишком большой файл.
 bool EarthWidget::readImageSize(const QString &filePath, int &width, int &height) const
 {
     width = 0;
@@ -660,6 +695,7 @@ bool EarthWidget::readImageSize(const QString &filePath, int &width, int &height
     return true;
 }
 
+// Загружаем QImage в RGBA-текстуру OpenGL с фильтрацией по ближайшему соседу.
 bool EarthWidget::loadTexture(const QString &filePath,
                               int expectedWidth,
                               int expectedHeight)
@@ -708,11 +744,13 @@ bool EarthWidget::loadTexture(const QString &filePath,
 }
 
 
+// Ограничиваем размер текстуры маршрута максимумом видеокарты и 2048 пикселями.
 int EarthWidget::routeTextureLimit() const
 {
     return std::max(256, std::min(2048, m_maxTextureSize));
 }
 
+// Освобождаем только GPU-ресурсы старого маршрута.
 void EarthWidget::clearRouteOverlay()
 {
     if (context())
@@ -741,6 +779,7 @@ void EarthWidget::clearRouteOverlay()
     update();
 }
 
+// Преобразуем исходные пиксельные координаты сетки в географические и строим треугольники.
 bool EarthWidget::loadRouteOverlay(const QImage &image,
                                    const GeoReference &geoReference,
                                    int originalWidth,
@@ -763,6 +802,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
         return false;
     }
 
+// Количество делений сетки определяется параметром 96 и отношением сторон исходного TIFF.
     const int segmentCount = 96;
     const double aspect =
         static_cast<double>(originalWidth) / originalHeight;
@@ -783,6 +823,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
 
     const double pi = 3.14159265358979323846;
 
+// У каждой вершины сетки свои координаты: пиксель → UTM/UPS → широта/долгота.
     for (int y = 0; y <= rows; ++y)
     {
         const double v =
@@ -796,6 +837,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
             double latitude = 0.0;
             double longitude = 0.0;
 
+// Если географическое преобразование не удалось, прекращаем наложение.
             if (!geoReference.planar2geo(
                     u * originalWidth,
                     v * originalHeight,
@@ -808,6 +850,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
                 return false;
             }
 
+// Переводим градусы в радианы и размещаем вершину на сфере радиуса 1.003.
             const double latRad = latitude * pi / 180.0;
             const double lonRad = longitude * pi / 180.0;
 
@@ -828,6 +871,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
         }
     }
 
+// Соединяем соседние вершины в пары треугольников по индексам.
     const int rowSize = columns + 1;
 
     for (int y = 0; y < rows; ++y)
@@ -849,10 +893,12 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
         }
     }
 
+// Перед созданием новых OpenGL-буферов освобождаем старые.
     clearRouteOverlay();
     makeCurrent();
 
     GLuint textureId = 0;
+// Создаём отдельную RGBA-текстуру, в альфа-канале которой прозрачность фона.
     glGenTextures(1, &textureId);
     glBindTexture(GL_TEXTURE_2D, textureId);
 
@@ -876,6 +922,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
         return false;
     }
 
+// Готовим новые VBO/IBO и передаём владение EarthWidget после успешной загрузки.
     std::unique_ptr<QOpenGLBuffer> vertexBuffer(
         new QOpenGLBuffer(QOpenGLBuffer::VertexBuffer)
     );
@@ -921,6 +968,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
         return false;
     }
 
+// Сохраняем готовые ресурсы для следующих вызовов paintGL().
     m_routeTextureId = textureId;
     m_routeIndexCount = indices.size();
     m_routeVertexBuffer = std::move(vertexBuffer);
@@ -931,6 +979,7 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
     return true;
 }
 
+// Поворачиваем глобус к центру маршрута и немного приближаем камеру.
 void EarthWidget::centerOnCoordinates(double latitude, double longitude)
 {
     m_rotationX = static_cast<float>(latitude);

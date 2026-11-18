@@ -8,6 +8,7 @@
 class QTextStream;
 class QImage;
 
+// Границы 2%-контрастирования и количество действительных пикселей одного канала.
 struct ContrastBandStats
 {
     ContrastBandStats();
@@ -17,6 +18,7 @@ struct ContrastBandStats
     quint64 validSamples;
 };
 
+// Информация о растре и статистика всех цветовых каналов.
 struct ContrastResult
 {
     ContrastResult();
@@ -29,12 +31,15 @@ struct ContrastResult
     bool hasNoData;
     double noDataValue;
 
+// Для RGB у красного, зелёного и синего канала независимые пороги.
     QVector<ContrastBandStats> bands;
 };
 
+// Фасад чтения TIFF, расчёта контраста и подготовки текстуры маршрута.
 class RasterContrast
 {
 public:
+// Статическая функция передаёт данные через ссылки; создание объекта не требуется.
     static bool process(const QString &inputPath,
                         const QString &outputPath,
                         bool hasNoData,

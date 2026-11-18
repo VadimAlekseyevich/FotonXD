@@ -16,6 +16,7 @@
 #include <QTextCodec>
 #include <QTextStream>
 
+// Конструктор настраивает меню, графический компонент и сигналы состояния.
 MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
     : QMainWindow(parent),
       m_earthWidget(new EarthWidget(mapDirectory, this)),
@@ -30,16 +31,20 @@ MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
 {
     setWindowTitle(QStringLiteral("Task 6 - Earth routes"));
     resize(1100, 760);
+// Всю центральную область окна занимает Земля, рисуемая в EarthWidget.
     setCentralWidget(m_earthWidget);
 
+// Добавляем меню и действие выбора GeoTIFF.
     QMenu *fileMenu =
         menuBar()->addMenu(QString::fromUtf8("Файл"));
     QAction *openAction =
         fileMenu->addAction(QString::fromUtf8("Открыть изображение"));
 
+// Связываем нажатие пункта меню со слотом openImage().
     connect(openAction, &QAction::triggered,
             this, &MainWindow::openImage);
 
+// При новом измерении FPS сохраняем число и обновляем QStatusBar.
     connect(m_earthWidget, &EarthWidget::fpsChanged,
             this, [this](int fps)
             {
@@ -47,6 +52,7 @@ MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
                 refreshStatusBar();
             });
 
+// Получаем от графического компонента информацию о загрузке базовой карты.
     connect(m_earthWidget, &EarthWidget::textureStatusChanged,
             this, [this](const QString &status)
             {
@@ -54,6 +60,7 @@ MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
                 refreshStatusBar();
             });
 
+// Координаты курсора приходят из EarthWidget через сигнал Qt.
     connect(m_earthWidget, &EarthWidget::coordinatesChanged,
             this, [this](bool onGlobe, double latitude, double longitude)
             {
@@ -66,8 +73,10 @@ MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
     refreshStatusBar();
 }
 
+// Полный сценарий загрузки: выбрать файл, прочитать геопривязку, контрастировать, наложить на Землю.
 void MainWindow::openImage()
 {
+// Выбор исходного TIFF через системный диалог.
     const QString imagePath =
         QFileDialog::getOpenFileName(
             this,
@@ -76,19 +85,23 @@ void MainWindow::openImage()
             QStringLiteral("GeoTIFF (*.tif *.tiff);;All files (*)")
         );
 
+// При отмене выбора выходим, ничего не меняя.
     if (imagePath.isEmpty())
         return;
 
-    // Task requirement: discard the previous route before opening a new one.
+    // По условию задания предыдущий маршрут удаляется перед открытием нового.
+// До чтения нового файла удаляем прежние OpenGL-ресурсы маршрута.
     m_earthWidget->clearRouteOverlay();
     m_hasRoute = false;
     setWindowTitle(QStringLiteral("Task 6 - Earth routes"));
     refreshStatusBar();
 
+// Метаданные GeoTIFF и GeoReference отвечают за координаты, не за цвет пикселей.
     GeoTiffMetadata metadata;
     GeoReference geoReference;
     QString error;
 
+// Проверяем чтение географических тегов и инициализацию проекции.
     if (!GeoTiffReader::read(imagePath, metadata, error) ||
         !geoReference.initialize(metadata, error))
     {
@@ -98,12 +111,14 @@ void MainWindow::openImage()
         return;
     }
 
+// Выходной TIFF имеет суффикс _8bit и не заменяет исходник.
     const QFileInfo inputInfo(imagePath);
     const QString outputPath =
         inputInfo.dir().absoluteFilePath(
             inputInfo.completeBaseName() + QStringLiteral("_8bit.tif")
         );
 
+// Статистика гистограмм и прогресс выводятся в консоль.
     QTextStream output(stdout);
 #ifdef Q_OS_WIN
     output.setCodec(QTextCodec::codecForLocale());
@@ -114,9 +129,11 @@ void MainWindow::openImage()
     output << "Opening route: " << imagePath << "\n";
     output.flush();
 
+// Контрастирование возвращает статистику и уменьшенную RGBA-текстуру.
     ContrastResult contrastResult;
     QImage routePreview;
 
+// Читаем пиксели, исключаем NoData, растягиваем контраст и готовим маршрут к отрисовке.
     if (!RasterContrast::process(
             imagePath,
             outputPath,
@@ -134,6 +151,7 @@ void MainWindow::openImage()
         return;
     }
 
+// Определяем широту и долготу центрального пикселя исходного растра.
     double centerLatitude = 0.0;
     double centerLongitude = 0.0;
 
@@ -151,6 +169,7 @@ void MainWindow::openImage()
         return;
     }
 
+// Создаём географическую сетку и загружаем RGBA-текстуру в OpenGL.
     if (!m_earthWidget->loadRouteOverlay(
             routePreview, geoReference,
             metadata.width, metadata.height, error))
@@ -161,6 +180,7 @@ void MainWindow::openImage()
         return;
     }
 
+// После успеха помечаем маршрут открытым и поворачиваем камеру к его центру.
     m_routeCenterLatitude = centerLatitude;
     m_routeCenterLongitude = centerLongitude;
     m_hasRoute = true;
@@ -169,6 +189,7 @@ void MainWindow::openImage()
         centerLatitude, centerLongitude
     );
 
+// Показываем исходное имя файла в заголовке окна.
     setWindowTitle(
         QStringLiteral("Task 6 - Earth routes - %1")
             .arg(inputInfo.fileName())
@@ -177,20 +198,24 @@ void MainWindow::openImage()
     refreshStatusBar();
 }
 
+// Формируем текст статуса из четырёх частей: FPS, курсор, центр маршрута, базовая карта.
 void MainWindow::refreshStatusBar()
 {
+// Если луч курсора не попал в Землю, вместо координат выводятся прочерки.
     const QString cursorCoordinates = m_onGlobe
         ? QStringLiteral("Lat: %1, Lon: %2")
             .arg(m_latitude, 0, 'f', 6)
             .arg(m_longitude, 0, 'f', 6)
         : QStringLiteral("Lat: --, Lon: --");
 
+// Географический центр маршрута отображается с шестью знаками после запятой.
     const QString routeCoordinates = m_hasRoute
         ? QStringLiteral("Route center: %1, %2")
             .arg(m_routeCenterLatitude, 0, 'f', 6)
             .arg(m_routeCenterLongitude, 0, 'f', 6)
         : QStringLiteral("Route: none");
 
+// Выводим объединённую строку в QStatusBar.
     statusBar()->showMessage(
         QStringLiteral("FPS: %1 | %2 | %3 | %4")
             .arg(m_fps)

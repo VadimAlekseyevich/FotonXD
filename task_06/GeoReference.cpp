@@ -2,11 +2,13 @@
 
 #include <cmath>
 
+// Пока объект не настроен по GeoTIFF, преобразования запрещены.
 GeoReference::GeoReference()
     : m_initialized(false)
 {
 }
 
+// Проверяем наличие геопривязки и определитель матрицы пиксели → метры.
 bool GeoReference::initialize(const GeoTiffMetadata &metadata, QString &error)
 {
     error.clear();
@@ -20,6 +22,7 @@ bool GeoReference::initialize(const GeoTiffMetadata &metadata, QString &error)
     if (!m_projection.configureFromGeoTiff(metadata, error))
         return false;
 
+// Нулевой определитель означает, что обратное аффинное преобразование невозможно.
     const double determinant =
         metadata.gt[1] * metadata.gt[5] -
         metadata.gt[2] * metadata.gt[4];
@@ -35,6 +38,7 @@ bool GeoReference::initialize(const GeoTiffMetadata &metadata, QString &error)
     return true;
 }
 
+// Пиксельные координаты преобразуются в E,N, затем в геодезические градусы.
 bool GeoReference::planar2geo(double x,
                               double y,
                               double &latitudeDeg,
@@ -43,6 +47,7 @@ bool GeoReference::planar2geo(double x,
     if (!m_initialized)
         return false;
 
+// Формула аффинной геопривязки: смещение, размер пикселя и возможный поворот.
     const double easting =
         m_metadata.gt[0] +
         x * m_metadata.gt[1] +
@@ -53,6 +58,7 @@ bool GeoReference::planar2geo(double x,
         x * m_metadata.gt[4] +
         y * m_metadata.gt[5];
 
+// Обратная формула UTM/UPS превращает плоские метры в широту/долготу.
     return m_projection.projectedToGeo(
         easting,
         northing,
@@ -61,6 +67,7 @@ bool GeoReference::planar2geo(double x,
     );
 }
 
+// Выполняем обратную цепочку: градусы → метры → пиксельные координаты.
 bool GeoReference::geo2planar(double &x,
                               double &y,
                               double latitudeDeg,
@@ -72,6 +79,7 @@ bool GeoReference::geo2planar(double &x,
     double easting = 0.0;
     double northing = 0.0;
 
+// Прямая картографическая проекция на плоскость.
     if (!m_projection.geoToProjected(
             latitudeDeg,
             longitudeDeg,
@@ -81,6 +89,7 @@ bool GeoReference::geo2planar(double &x,
         return false;
     }
 
+// Вычитаем координаты начала растра перед обращением линейного преобразования.
     const double dx = easting - m_metadata.gt[0];
     const double dy = northing - m_metadata.gt[3];
 
@@ -104,6 +113,7 @@ bool GeoReference::geo2planar(double &x,
     return true;
 }
 
+// Возвращаем настроенный объект проекции по постоянной ссылке.
 const Projection &GeoReference::projection() const
 {
     return m_projection;
