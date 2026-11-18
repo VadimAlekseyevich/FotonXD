@@ -175,7 +175,7 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         return false;
     }
 
-    // GeoTIFF CT_TransverseMercator.
+    // Тип GeoTIFF CT_TransverseMercator: поперечная проекция Меркатора.
 // GeoTIFF-код 1: поперечная проекция Меркатора, используемая UTM.
     if (metadata.coordinateTransform == 1)
     {
@@ -218,7 +218,7 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         return true;
     }
 
-    // GeoTIFF CT_PolarStereographic.
+    // Тип GeoTIFF CT_PolarStereographic: полярная стереографическая проекция.
 // GeoTIFF-код 15: полярная стереографическая проекция.
     if (metadata.coordinateTransform == 15)
     {
@@ -253,10 +253,9 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         m_utmZone = 0;
         m_northHemisphere = latitudeParameter >= 0.0;
 
-        // Internally the formulas use Polar Stereographic variant A
-        // with the natural origin at the pole. Some GeoTIFF writers store
-        // a non-polar latitude of true scale instead; convert that value
-        // to the equivalent scale factor at the pole.
+        // Формулы используют вариант A полярной стереографии с началом на полюсе.
+        // Некоторые GeoTIFF задают широту истинного масштаба вне полюса;
+        // здесь переводим её в эквивалентный масштабный коэффициент у полюса.
         m_latitudeOfOriginDeg = m_northHemisphere ? 90.0 : -90.0;
         m_longitudeOfOriginDeg = longitudeOfOrigin;
         m_falseEasting = metadata.falseEasting;
@@ -272,8 +271,8 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
             else if (approximately(m_falseEasting, 2000000.0, 0.01) &&
                      approximately(m_falseNorthing, 2000000.0, 0.01))
             {
-                // Standard UPS definition if a writer omitted the
-                // redundant scale GeoKey.
+                // Если файл использует стандартную UPS, но не содержит масштабный
+                // GeoKey, подставляем общеизвестный коэффициент 0.994.
                 m_scaleFactor = 0.994;
             }
             else

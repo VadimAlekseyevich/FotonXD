@@ -499,8 +499,8 @@ bool parseTiff(QFile &file,
             return false;
         }
 
-        // The rest of the contrast algorithm works on logical
-        // strips. A tiled image is decoded into these row bands.
+        // В остальной части контрастирования данные обрабатываются полосами;
+        // тайловый растр заранее собираем в такие логические полосы.
         info.rowsPerStrip = info.tileLength;
     }
 
@@ -760,7 +760,7 @@ bool decodeLzw(const QByteArray &input,
             added.append(current.at(0));
             dictionary[nextCode++] = added;
 
-            // TIFF LZW uses "early change".
+            // В TIFF LZW размер кода увеличивается по правилу раннего перехода (early change).
             if (codeSize < 12 &&
                 nextCode == ((1 << codeSize) - 1))
             {

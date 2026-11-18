@@ -31,8 +31,8 @@ inline bool screenToGeodetic(const QPoint &pixel,
         pixel.y() < 0 || pixel.y() >= viewport.height())
         return false;
 
-    // QMouseEvent uses logical widget coordinates. The projected aspect ratio
-    // uses the same units, so devicePixelRatio does not enter these ratios.
+    // QMouseEvent сообщает логические координаты виджета; матрица перспективы
+    // использует те же единицы, поэтому devicePixelRatio не нужен.
 // Преобразуем координаты пикселя в диапазон NDC от -1 до +1.
     const float ndcX = 2.0f * (pixel.x() + 0.5f) / viewport.width() - 1.0f;
     const float ndcY = 1.0f - 2.0f * (pixel.y() + 0.5f) / viewport.height();
@@ -43,7 +43,7 @@ inline bool screenToGeodetic(const QPoint &pixel,
     if (!invertible)
         return false;
 
-    // In camera space the ray starts at (0,0,0) and goes through the pixel.
+    // В системе координат камеры луч выходит из (0,0,0) через пиксель экрана.
     const QVector4D nearPoint =
         inverseProjection * QVector4D(ndcX, ndcY, -1.0f, 1.0f);
     const QVector3D cameraDirection =
@@ -58,7 +58,8 @@ inline bool screenToGeodetic(const QPoint &pixel,
     const QVector3D direction =
         inverseModelView.mapVector(cameraDirection).normalized();
 
-    // Solve |origin + t*direction|^2 = 1. Select the nearest positive root.
+    // Решаем уравнение |origin + t*direction|² = 1 для единичной сферы.
+    // Берём ближайший положительный корень: это видимая точка поверхности.
 // Решаем квадратное уравнение пересечения луча с единичной сферой.
     const double halfB = QVector3D::dotProduct(origin, direction);
     const double c = QVector3D::dotProduct(origin, origin) - 1.0;
@@ -76,8 +77,9 @@ inline bool screenToGeodetic(const QPoint &pixel,
 // Нормализуем найденную точку пересечения до радиуса 1.
     const QVector3D hit = (origin + static_cast<float>(t) * direction).normalized();
 
-    // Exactly the mesh basis: X = cos(lat)*sin(lon),
-    // Y = sin(lat), Z = cos(lat)*cos(lon). Positive longitude = East.
+    // Используем ту же ориентацию осей, что и вершины глобуса:
+    // X = cos(lat)*sin(lon), Y = sin(lat), Z = cos(lat)*cos(lon).
+    // Положительная долгота означает восточное направление.
 // Получаем градусные широту и долготу по координатам XYZ.
     latitude = qRadiansToDegrees(
         std::asin(qBound(-1.0, static_cast<double>(hit.y()), 1.0)));
