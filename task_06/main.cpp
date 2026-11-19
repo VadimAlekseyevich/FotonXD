@@ -7,7 +7,6 @@
 
 int main(int argc, char *argv[])
 {
-    // Используем совместимый OpenGL 2.1 с 24-битным буфером глубины.
     QSurfaceFormat format;
     format.setVersion(2, 1);
     format.setProfile(QSurfaceFormat::CompatibilityProfile);
@@ -17,7 +16,6 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
 
-// Рабочая папка задаётся через CMake, чтобы приложение находило файлы карт.
 #ifdef FOTON_TASK6_SOURCE_DIR
     QDir::setCurrent(QString::fromUtf8(FOTON_TASK6_SOURCE_DIR));
 #endif

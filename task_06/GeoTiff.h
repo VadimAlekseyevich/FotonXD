@@ -4,7 +4,6 @@
 #include <QString>
 #include <QtGlobal>
 
-// Метаданные TIFF/GeoTIFF: размер, геопривязка, проекция и NoData.
 struct GeoTiffMetadata
 {
     GeoTiffMetadata();
@@ -12,9 +11,6 @@ struct GeoTiffMetadata
     int width;
     int height;
 
-    // Аффинное преобразование из пикселей в координаты карты:
-    // X = gt[0] + x * gt[1] + y * gt[2]
-    // Y = gt[3] + x * gt[4] + y * gt[5]
     double gt[6];
 
     quint16 modelType;
@@ -45,7 +41,6 @@ struct GeoTiffMetadata
     bool hasFalseEasting;
     bool hasFalseNorthing;
 
-    // NoData — значение отсутствующих данных, используемое при обработке растра.
     bool hasNoData;
     QString noDataText;
 
@@ -60,4 +55,4 @@ public:
                      QString &error);
 };
 
-#endif // GEOTIFF_H
+#endif

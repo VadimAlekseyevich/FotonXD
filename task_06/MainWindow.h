@@ -6,7 +6,6 @@
 
 class EarthWidget;
 
-// Главное окно: интерфейс, открытие маршрутов и строка состояния.
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -33,4 +32,4 @@ private:
     double m_routeCenterLongitude;
 };
 
-#endif // MAINWINDOW_H
+#endif

@@ -5,7 +5,6 @@
 
 struct GeoTiffMetadata;
 
-// Перевод координат WGS84 ↔ плоские координаты UTM/полярной стереографии.
 class Projection
 {
 public:
@@ -18,7 +17,6 @@ public:
 
     Projection();
 
-    // Параметры берём из EPSG-кода или непосредственно из GeoTIFF.
     bool configureFromGeoTiff(const GeoTiffMetadata &metadata,
                               QString &error);
 
@@ -82,4 +80,4 @@ private:
     double m_falseNorthing;
 };
 
-#endif // PROJECTION_H
+#endif

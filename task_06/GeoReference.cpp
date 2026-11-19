@@ -7,7 +7,6 @@ GeoReference::GeoReference()
 {
 }
 
-// Без геопривязки и обратимой матрицы нельзя переводить координаты.
 bool GeoReference::initialize(const GeoTiffMetadata &metadata, QString &error)
 {
     error.clear();
@@ -36,7 +35,6 @@ bool GeoReference::initialize(const GeoTiffMetadata &metadata, QString &error)
     return true;
 }
 
-// Пиксель сначала переводится в метры карты, затем через UTM/UPS — в градусы.
 bool GeoReference::planar2geo(double x,
                               double y,
                               double &latitudeDeg,
@@ -63,7 +61,6 @@ bool GeoReference::planar2geo(double x,
     );
 }
 
-// В обратную сторону сначала применяем проекцию, затем обращаем аффинную матрицу.
 bool GeoReference::geo2planar(double &x,
                               double &y,
                               double latitudeDeg,
@@ -84,7 +81,6 @@ bool GeoReference::geo2planar(double &x,
         return false;
     }
 
-    // Убираем смещение карты и решаем систему из двух линейных уравнений.
     const double dx = easting - m_metadata.gt[0];
     const double dy = northing - m_metadata.gt[3];
 

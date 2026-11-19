@@ -40,7 +40,6 @@ MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
     connect(openAction, &QAction::triggered,
             this, &MainWindow::openImage);
 
-    // Данные об FPS, карте и координатах приходят из EarthWidget через сигналы Qt.
     connect(m_earthWidget, &EarthWidget::fpsChanged,
             this, [this](int fps)
             {
@@ -67,7 +66,6 @@ MainWindow::MainWindow(const QString &mapDirectory, QWidget *parent)
     refreshStatusBar();
 }
 
-// Загрузка маршрута: GeoTIFF → геопривязка → контрастирование → OpenGL.
 void MainWindow::openImage()
 {
     const QString imagePath =
@@ -81,7 +79,6 @@ void MainWindow::openImage()
     if (imagePath.isEmpty())
         return;
 
-    // Старый маршрут очищается до проверки нового файла. При ошибке он уже не восстановится.
     m_earthWidget->clearRouteOverlay();
     m_hasRoute = false;
     setWindowTitle(QStringLiteral("Task 6 - Earth routes"));
@@ -91,7 +88,6 @@ void MainWindow::openImage()
     GeoReference geoReference;
     QString error;
 
-    // GeoTiffReader читает метаданные, GeoReference настраивает проекцию.
     if (!GeoTiffReader::read(imagePath, metadata, error) ||
         !geoReference.initialize(metadata, error))
     {
@@ -101,7 +97,6 @@ void MainWindow::openImage()
         return;
     }
 
-    // Исходный TIFF не перезаписываем: результат сохраняется рядом с суффиксом _8bit.
     const QFileInfo inputInfo(imagePath);
     const QString outputPath =
         inputInfo.dir().absoluteFilePath(
@@ -121,7 +116,6 @@ void MainWindow::openImage()
     ContrastResult contrastResult;
     QImage routePreview;
 
-    // RasterContrast обрабатывает пиксели и отдельно создаёт RGBA-превью для OpenGL.
     if (!RasterContrast::process(
             imagePath,
             outputPath,
@@ -139,7 +133,6 @@ void MainWindow::openImage()
         return;
     }
 
-    // Координаты центра получаем по центру исходного растра, а не по размеру превью.
     double centerLatitude = 0.0;
     double centerLongitude = 0.0;
 
@@ -157,7 +150,6 @@ void MainWindow::openImage()
         return;
     }
 
-    // Геопривязка задаёт положение сетки; routePreview — её текстуру.
     if (!m_earthWidget->loadRouteOverlay(
             routePreview, geoReference,
             metadata.width, metadata.height, error))

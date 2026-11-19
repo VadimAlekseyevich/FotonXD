@@ -30,7 +30,6 @@ set(HEADERS
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 
-# Путь к исходникам нужен для поиска базовой карты Earth.
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     FOTON_TASK6_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )

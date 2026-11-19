@@ -18,7 +18,6 @@ class QWheelEvent;
 class QImage;
 class GeoReference;
 
-// Отдельный OpenGL-виджет: глобус, камера, наложение маршрута.
 class EarthWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
     Q_OBJECT
@@ -52,7 +51,6 @@ protected:
     void leaveEvent(QEvent *event) override;
 
 private:
-    // Вершина: координаты в 3D (x, y, z) и в текстуре (u, v).
     struct Vertex { float x, y, z, u, v; };
     bool initializeShaders();
     void initializeSphere();
@@ -68,7 +66,6 @@ private:
     std::unique_ptr<QOpenGLBuffer> m_vertexBuffer;
     std::unique_ptr<QOpenGLBuffer> m_indexBuffer;
     QMatrix4x4 m_projection;
-    // Базовая карта и маршрут используют разные OpenGL-текстуры.
     GLuint m_textureId;
     GLuint m_routeTextureId;
     int m_indexCount;
@@ -87,4 +84,4 @@ private:
     int m_frameCount;
     QTimer m_updateTimer;
 };
-#endif // EARTHWIDGET_H
+#endif

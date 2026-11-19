@@ -54,7 +54,6 @@ EarthWidget::EarthWidget(const QString &mapDirectory, QWidget *parent)
     m_fpsTimer.start();
 }
 
-// Ресурсы OpenGL нужно удалять при активном графическом контексте.
 EarthWidget::~EarthWidget()
 {
     m_updateTimer.stop();
@@ -135,7 +134,6 @@ void EarthWidget::resizeGL(int width, int height)
         updateCursorCoordinates(m_lastCursorPosition);
 }
 
-// Порядок отрисовки: сначала Земля, затем поверх неё маршрут.
 void EarthWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -203,13 +201,11 @@ void EarthWidget::paintGL()
 
     m_program->release();
 
-    // У NoData-пикселей маршрута альфа равна нулю — через них видна базовая карта.
     if (m_routeTextureId != 0 &&
         m_routeVertexBuffer &&
         m_routeIndexBuffer &&
         m_routeIndexCount > 0)
     {
-        // Наложение рисуется с альфа-смешиванием без записи новых значений глубины.
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(GL_FALSE);
@@ -254,7 +250,6 @@ void EarthWidget::paintGL()
         glDisable(GL_BLEND);
     }
 
-    // FPS рассчитывается по количеству нарисованных кадров за прошедшее время.
     ++m_frameCount;
     const qint64 elapsedMs = m_fpsTimer.elapsed();
 
@@ -271,7 +266,6 @@ void EarthWidget::paintGL()
     }
 }
 
-// В матрице model-view учтены расстояние до камеры и поворот глобуса.
 QMatrix4x4 EarthWidget::modelViewMatrix() const
 {
     QMatrix4x4 matrix;
@@ -324,7 +318,6 @@ void EarthWidget::mouseMoveEvent(QMouseEvent *event)
 void EarthWidget::wheelEvent(QWheelEvent *event)
 {
     const QPoint angle = event->angleDelta();
-    // На некоторых тачпадах прокрутка приходит через pixelDelta вместо angleDelta.
     const double steps = angle.y() != 0 ? angle.y() / 120.0
                                         : event->pixelDelta().y() / 50.0;
     if (steps != 0.0)
@@ -403,7 +396,6 @@ bool EarthWidget::initializeShaders()
     return true;
 }
 
-// Сферу строим как сетку по широте и долготе, с UV-координатами для карты.
 void EarthWidget::initializeSphere()
 {
     const int longitudeSegments = 256;
@@ -446,7 +438,6 @@ void EarthWidget::initializeSphere()
 
     const int rowSize = longitudeSegments + 1;
 
-    // Каждую ячейку сетки разбиваем на два треугольника.
     for (int latitudeIndex = 0; latitudeIndex < latitudeSegments; ++latitudeIndex)
     {
         for (int longitudeIndex = 0; longitudeIndex < longitudeSegments; ++longitudeIndex)
@@ -493,7 +484,6 @@ void EarthWidget::initializeSphere()
     m_indexBuffer->release();
 }
 
-// Берём карту максимального размера, разрешённого видеокартой.
 void EarthWidget::initializeTexture()
 {
     GLint maxTextureSize = 0;
@@ -715,7 +705,6 @@ bool EarthWidget::loadTexture(const QString &filePath,
 }
 
 
-// Для маршрута ограничиваем текстуру 2048 пикселями по большей стороне.
 int EarthWidget::routeTextureLimit() const
 {
     return std::max(256, std::min(2048, m_maxTextureSize));
@@ -771,7 +760,6 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
         return false;
     }
 
-    // Число ячеек сетки зависит от пропорций исходного TIFF.
     const int segmentCount = 96;
     const double aspect =
         static_cast<double>(originalWidth) / originalHeight;
@@ -792,7 +780,6 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
 
     const double pi = 3.14159265358979323846;
 
-    // Вершины маршрута переводим из пикселей TIFF в широту и долготу.
     for (int y = 0; y <= rows; ++y)
     {
         const double v =
@@ -818,7 +805,6 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
                 return false;
             }
 
-            // Радиус 1.003 немного поднимает маршрут над Землёй и снижает z-fighting.
             const double latRad = latitude * pi / 180.0;
             const double lonRad = longitude * pi / 180.0;
 
@@ -864,7 +850,6 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
     makeCurrent();
 
     GLuint textureId = 0;
-    // Альфа-канал текстуры хранит прозрачность NoData.
     glGenTextures(1, &textureId);
     glBindTexture(GL_TEXTURE_2D, textureId);
 
@@ -943,7 +928,6 @@ bool EarthWidget::loadRouteOverlay(const QImage &image,
     return true;
 }
 
-// После загрузки поворачиваем глобус к центру маршрута.
 void EarthWidget::centerOnCoordinates(double latitude, double longitude)
 {
     m_rotationX = static_cast<float>(latitude);

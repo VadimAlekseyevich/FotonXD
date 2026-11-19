@@ -9,7 +9,6 @@
 #include <QtMath>
 #include <cmath>
 
-// Работаем с единичной сферой, не с эллипсоидом WGS84.
 namespace GeoPicking
 {
 inline bool screenToGeodetic(const QPoint &pixel,
@@ -27,11 +26,9 @@ inline bool screenToGeodetic(const QPoint &pixel,
         pixel.y() < 0 || pixel.y() >= viewport.height())
         return false;
 
-    // Координаты мыши и размеры виджета заданы в одних логических пикселях.
     const float ndcX = 2.0f * (pixel.x() + 0.5f) / viewport.width() - 1.0f;
     const float ndcY = 1.0f - 2.0f * (pixel.y() + 0.5f) / viewport.height();
 
-    // Обратная матрица проекции переводит точку экрана в направление луча.
     bool invertible = false;
     const QMatrix4x4 inverseProjection = projection.inverted(&invertible);
     if (!invertible)
@@ -42,7 +39,6 @@ inline bool screenToGeodetic(const QPoint &pixel,
     const QVector3D cameraDirection =
         nearPoint.toVector3DAffine().normalized();
 
-    // Обратная model-view учитывает положение камеры и поворот глобуса.
     const QMatrix4x4 inverseModelView = modelView.inverted(&invertible);
     if (!invertible)
         return false;
@@ -51,7 +47,6 @@ inline bool screenToGeodetic(const QPoint &pixel,
     const QVector3D direction =
         inverseModelView.mapVector(cameraDirection).normalized();
 
-    // Находим ближайшее положительное пересечение луча с единичной сферой.
     const double halfB = QVector3D::dotProduct(origin, direction);
     const double c = QVector3D::dotProduct(origin, origin) - 1.0;
     const double discriminant = halfB * halfB - c;
@@ -67,13 +62,12 @@ inline bool screenToGeodetic(const QPoint &pixel,
 
     const QVector3D hit = (origin + static_cast<float>(t) * direction).normalized();
 
-    // Оси должны совпадать с формулами построения сферы в EarthWidget.
     latitude = qRadiansToDegrees(
         std::asin(qBound(-1.0, static_cast<double>(hit.y()), 1.0)));
     longitude = qRadiansToDegrees(
         std::atan2(static_cast<double>(hit.x()), static_cast<double>(hit.z())));
     return true;
 }
-} // namespace GeoPicking
+}
 
-#endif // GEOPICKING_H
+#endif

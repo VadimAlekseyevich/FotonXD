@@ -6,7 +6,6 @@
 namespace
 {
 const double Pi = 3.1415926535897932384626433832795;
-// Параметры эллипсоида WGS84. Они используются в формулах, а не в 3D-модели сферы.
 const double A = 6378137.0;
 const double InvF = 298.257223563;
 const double F = 1.0 / InvF;
@@ -55,7 +54,6 @@ bool approximately(double value, double expected, double tolerance)
     return std::fabs(value - expected) <= tolerance;
 }
 
-// Масштаб на параллели истинного масштаба пересчитываем к полюсу.
 double polarScaleAtPole(double standardParallelDeg)
 {
     const double phiF = degToRad(standardParallelDeg);
@@ -108,7 +106,6 @@ Projection::Projection()
 {
 }
 
-// Сначала пробуем известный EPSG, иначе используем GeoKeys файла.
 bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
                                       QString &error)
 {
@@ -120,7 +117,6 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         return configureFromEpsg(metadata.projectedCrs, error);
     }
 
-    // Поддерживаем WGS84: проверяем систему отсчёта и параметры эллипсоида.
     if (metadata.geographicType != 0 &&
         metadata.geographicType != 32767 &&
         metadata.geographicType != 4326)
@@ -153,7 +149,6 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         return false;
     }
 
-    // Плоские координаты здесь должны быть заданы в метрах.
     if (metadata.linearUnits != 0 &&
         metadata.linearUnits != 32767 &&
         metadata.linearUnits != 9001)
@@ -163,7 +158,6 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         return false;
     }
 
-    // UTM основана на поперечной проекции Меркатора.
     if (metadata.coordinateTransform == 1)
     {
         if (!metadata.hasLatitudeOfOrigin ||
@@ -205,7 +199,6 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         return true;
     }
 
-    // Полярная стереография задаётся отдельными параметрами GeoTIFF.
     if (metadata.coordinateTransform == 15)
     {
         if (!metadata.hasLatitudeOfOrigin ||
@@ -239,7 +232,6 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
         m_utmZone = 0;
         m_northHemisphere = latitudeParameter >= 0.0;
 
-        // Если указан масштаб на другой параллели, приводим его к масштабу у полюса.
         m_latitudeOfOriginDeg = m_northHemisphere ? 90.0 : -90.0;
         m_longitudeOfOriginDeg = longitudeOfOrigin;
         m_falseEasting = metadata.falseEasting;
@@ -254,7 +246,6 @@ bool Projection::configureFromGeoTiff(const GeoTiffMetadata &metadata,
             else if (approximately(m_falseEasting, 2000000.0, 0.01) &&
                      approximately(m_falseNorthing, 2000000.0, 0.01))
             {
-                // Для стандартной UPS без явно указанного масштаба берём 0.994.
                 m_scaleFactor = 0.994;
             }
             else
@@ -288,7 +279,6 @@ bool Projection::configureFromEpsg(int epsgCode, QString &error)
     m_utmZone = 0;
     m_northHemisphere = true;
 
-    // Стандартная UTM в северном полушарии: EPSG 32601–32660.
     if (epsgCode >= 32601 && epsgCode <= 32660)
     {
         m_type = UTM;
@@ -302,7 +292,6 @@ bool Projection::configureFromEpsg(int epsgCode, QString &error)
         return true;
     }
 
-    // Южная UTM использует ложное северное смещение 10 000 000 м.
     if (epsgCode >= 32701 && epsgCode <= 32760)
     {
         m_type = UTM;
@@ -316,7 +305,6 @@ bool Projection::configureFromEpsg(int epsgCode, QString &error)
         return true;
     }
 
-    // Стандартная UPS использует масштаб 0.994 и смещения по 2 000 000 м.
     if (epsgCode == 32661 || epsgCode == 32761)
     {
         m_type = UPS;
@@ -364,7 +352,6 @@ bool Projection::geoToProjected(double latitudeDeg,
     return false;
 }
 
-// Прямое преобразование UTM: широта/долгота → координаты в метрах.
 bool Projection::utmForward(double latitudeDeg,
                             double longitudeDeg,
                             double &easting,
@@ -431,7 +418,6 @@ bool Projection::utmForward(double latitudeDeg,
     return true;
 }
 
-// Обратное преобразование UTM: метры → широта/долгота.
 bool Projection::utmReverse(double easting,
                             double northing,
                             double &latitudeDeg,
@@ -522,7 +508,6 @@ bool Projection::utmReverse(double easting,
     return true;
 }
 
-// Прямое преобразование для полярных областей.
 bool Projection::upsForward(double latitudeDeg,
                             double longitudeDeg,
                             double &easting,
@@ -574,7 +559,6 @@ bool Projection::upsForward(double latitudeDeg,
     return std::isfinite(easting) && std::isfinite(northing);
 }
 
-// Обратное преобразование полярной стереографии.
 bool Projection::upsReverse(double easting,
                             double northing,
                             double &latitudeDeg,

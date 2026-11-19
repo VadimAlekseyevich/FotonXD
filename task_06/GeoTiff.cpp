@@ -38,7 +38,6 @@ const quint16 GeoKeyStraightVertPoleLong = 3095;
 
 const quint16 RasterPixelIsPoint = 2;
 
-// Одна запись каталога TIFF (IFD): тег, тип, длина и адрес значения.
 struct TiffEntry
 {
     quint16 tag;
@@ -153,7 +152,6 @@ bool readAt(QFile &file, quint32 offset, qint64 size, QByteArray &data)
     return data.size() == size;
 }
 
-// Маленькое значение хранится прямо в IFD, большое — по смещению.
 bool entryData(QFile &file,
                const TiffEntry &entry,
                QByteArray &data)
@@ -334,7 +332,6 @@ GeoTiffMetadata::GeoTiffMetadata()
         gt[i] = 0.0;
 }
 
-// Читаем заголовок TIFF, каталог IFD и географические ключи.
 bool GeoTiffReader::read(const QString &filePath,
                          GeoTiffMetadata &metadata,
                          QString &error)
@@ -370,7 +367,6 @@ bool GeoTiffReader::read(const QString &filePath,
 
     const quint16 magic = readU16(header, 2, littleEndian);
 
-    // BigTIFF здесь не поддерживается: у него другой формат каталога.
     if (magic == 43)
     {
         error = "BigTIFF is not supported by this task reader";
@@ -440,7 +436,6 @@ bool GeoTiffReader::read(const QString &filePath,
     metadata.width = static_cast<int>(width);
     metadata.height = static_cast<int>(height);
 
-    // NoData хранится как текстовый TIFF-тег, а не как обычный пиксельный канал.
     const TiffEntry *noDataEntry = findEntry(entries, TagGdalNoData);
     if (noDataEntry)
     {
@@ -452,7 +447,6 @@ bool GeoTiffReader::read(const QString &filePath,
         }
     }
 
-    // По GeoKeyDirectory узнаём систему координат и параметры проекции.
     const TiffEntry *geoKeyEntry = findEntry(entries, TagGeoKeyDirectory);
     if (!geoKeyEntry)
     {
@@ -567,7 +561,6 @@ bool GeoTiffReader::read(const QString &filePath,
     metadata.coordinateTransform = shortGeoKeys.value(GeoKeyCoordTransform, 0);
     metadata.linearUnits = shortGeoKeys.value(GeoKeyLinearUnits, 0);
 
-    // Геопривязка может задаваться полной матрицей преобразования.
     const TiffEntry *matrixEntry = findEntry(entries, TagModelTransformation);
 
     if (matrixEntry)
@@ -591,7 +584,6 @@ bool GeoTiffReader::read(const QString &filePath,
     }
     else
     {
-        // Либо размером пикселя и опорной точкой ModelTiepoint.
         const TiffEntry *scaleEntry = findEntry(entries, TagModelPixelScale);
         const TiffEntry *tieEntry = findEntry(entries, TagModelTiepoint);
 
@@ -629,7 +621,6 @@ bool GeoTiffReader::read(const QString &filePath,
         metadata.hasGeoTransform = true;
     }
 
-    // Для PixelIsPoint переводим привязку из центра пикселя к его верхнему левому углу.
     if (metadata.rasterType == RasterPixelIsPoint)
     {
         metadata.gt[0] -= 0.5 * metadata.gt[1] + 0.5 * metadata.gt[2];

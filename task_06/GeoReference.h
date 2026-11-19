@@ -6,7 +6,6 @@
 
 #include <QString>
 
-// Преобразования: пиксель GeoTIFF ↔ координаты карты ↔ широта/долгота.
 class GeoReference
 {
 public:
@@ -14,7 +13,6 @@ public:
 
     bool initialize(const GeoTiffMetadata &metadata, QString &error);
 
-    // (0,0) соответствует верхнему левому углу первого пикселя.
     bool planar2geo(double x,
                     double y,
                     double &latitudeDeg,
@@ -33,4 +31,4 @@ private:
     bool m_initialized;
 };
 
-#endif // GEOREFERENCE_H
+#endif
